@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Adaptive Math Tutoring Assistant</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="logo">
+                <i class="fas fa-calculator"></i>
+                <h1>Math Tutor AI</h1>
+            </div>
+            <nav class="nav">
+                <ul>
+                    <li><a href="#home" class="active">Start</a></li>
+                    <li><a href="#tasks">Aufgaben</a></li>
+                    <li><a href="#profile">Profil</a></li>
+                    <li><a href="#analytics">Analytics</a></li>
+                </ul>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main">
+        <div class="container">
+            <!-- Welcome Section -->
+            <section class="welcome-section">
+                <div class="welcome-content">
+                    <h2>Willkommen beim adaptiven Mathematik-Tutor</h2>
+                    <p>Lass uns gemeinsam deine Mathematik-Fähigkeiten verbessern! Du kannst Aufgaben hochladen oder neue generieren lassen.</p>
+                </div>
+            </section>
+
+            <!-- Input Options -->
+            <section class="input-section">
+                <div class="input-tabs">
+                    <button class="tab-btn active" data-tab="text-input">
+                        <i class="fas fa-keyboard"></i>
+                        Text eingeben
+                    </button>
+                    <button class="tab-btn" data-tab="image-upload">
+                        <i class="fas fa-image"></i>
+                        Bild hochladen
+                    </button>
+                    <button class="tab-btn" data-tab="generate-task">
+                        <i class="fas fa-magic"></i>
+                        Aufgabe generieren
+                    </button>
+                </div>
+
+                <!-- Text Input Tab -->
+                <div class="tab-content active" id="text-input">
+                    <div class="input-container">
+                        <div class="input-header">
+                            <h3>Mathematik-Aufgabe eingeben</h3>
+                            <p>Gib deine Mathematik-Aufgabe oder -Frage hier ein:</p>
+                        </div>
+                        <div class="text-input-area">
+                            <textarea 
+                                id="math-input" 
+                                placeholder="Beispiel: Löse die Gleichung 2x + 5 = 13 oder erkläre mir die Ableitung von x²..."
+                                rows="6"
+                            ></textarea>
+                            <div class="input-actions">
+                                <button class="btn btn-primary" id="analyze-btn">
+                                    <i class="fas fa-brain"></i>
+                                    Mit KI analysieren
+                                </button>
+                                <button class="btn btn-secondary" id="clear-btn">
+                                    <i class="fas fa-trash"></i>
+                                    Löschen
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Image Upload Tab -->
+                <div class="tab-content" id="image-upload">
+                    <div class="input-container">
+                        <div class="input-header">
+                            <h3>Bild hochladen</h3>
+                            <p>Lade ein Bild deiner Mathematik-Aufgabe hoch:</p>
+                        </div>
+                        <div class="image-upload-area">
+                            <div class="upload-zone" id="upload-zone">
+                                <i class="fas fa-cloud-upload-alt"></i>
+                                <p>Klicke hier oder ziehe ein Bild hierher</p>
+                                <input type="file" id="image-input" accept="image/*" hidden>
+                            </div>
+                            <div class="image-preview" id="image-preview" style="display: none;">
+                                <img id="preview-img" src="" alt="Vorschau">
+                                <button class="btn btn-danger" id="remove-image">
+                                    <i class="fas fa-times"></i>
+                                    Entfernen
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Generate Task Tab -->
+                <div class="tab-content" id="generate-task">
+                    <div class="input-container">
+                        <div class="input-header">
+                            <h3>Neue Aufgabe generieren</h3>
+                            <p>Lass die KI eine personalisierte Mathematik-Aufgabe für dich erstellen:</p>
+                        </div>
+                        <div class="task-generation-form">
+                            <div class="form-group">
+                                <label for="topic-select">Thema:</label>
+                                <select id="topic-select">
+                                    <option value="functions">Funktionen</option>
+                                    <option value="integration">Integration</option>
+                                    <option value="geometry">Geometrie</option>
+                                    <option value="algebra">Algebra</option>
+                                    <option value="statistics">Statistik</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="difficulty-select">Schwierigkeit:</label>
+                                <select id="difficulty-select">
+                                    <option value="easy">Einfach</option>
+                                    <option value="medium">Mittel</option>
+                                    <option value="hard">Schwer</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="task-type-select">Aufgabentyp:</label>
+                                <select id="task-type-select">
+                                    <option value="conceptual">Konzeptuelles Verständnis</option>
+                                    <option value="word-problem">Textaufgabe</option>
+                                    <option value="calculation">Reine Berechnung</option>
+                                </select>
+                            </div>
+                            <button class="btn btn-primary" id="generate-btn">
+                                <i class="fas fa-magic"></i>
+                                Aufgabe generieren
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Results Section -->
+            <section class="results-section" id="results-section" style="display: none;">
+                <div class="results-container">
+                    <div class="results-header">
+                        <h3>KI-Analyse Ergebnis</h3>
+                        <button class="btn btn-secondary" id="close-results">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    <div class="results-content" id="results-content">
+                        <!-- KI-Antworten werden hier angezeigt -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- Loading Indicator -->
+            <div class="loading-indicator" id="loading-indicator" style="display: none;">
+                <div class="spinner"></div>
+                <p>KI analysiert deine Eingabe...</p>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <p>&copy; 2024 Adaptive Math Tutoring Assistant. Alle Rechte vorbehalten.</p>
+        </div>
+    </footer>
+
+    <!-- API Configuration Modal -->
+    <div class="modal" id="api-config-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>API-Konfiguration</h3>
+                <button class="close-modal" id="close-modal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p>Um die KI-Funktionen zu nutzen, musst du deinen API-Schlüssel konfigurieren:</p>
+                <div class="form-group">
+                    <label for="api-key">OpenAI API-Schlüssel:</label>
+                    <input type="password" id="api-key" placeholder="sk-...">
+                    <small>Dein API-Schlüssel wird lokal gespeichert und nicht übertragen.</small>
+                </div>
+                <div class="form-group">
+                    <label for="api-provider">KI-Provider:</label>
+                    <select id="api-provider">
+                        <option value="openai">OpenAI (ChatGPT)</option>
+                        <option value="anthropic">Anthropic (Claude)</option>
+                        <option value="local">Lokales Modell</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="save-api-config">Speichern</button>
+                <button class="btn btn-secondary" id="cancel-api-config">Abbrechen</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
