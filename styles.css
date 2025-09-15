@@ -388,6 +388,87 @@ body {
     font-size: var(--font-size-sm);
 }
 
+/* Profile Form Styles */
+.profile-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-6);
+}
+
+.profile-section {
+    background: var(--surface-color);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-5);
+    border: 1px solid var(--border-color);
+}
+
+.profile-section h4 {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    color: var(--primary-color);
+    margin-bottom: var(--spacing-4);
+    padding-bottom: var(--spacing-2);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.profile-section h4 i {
+    font-size: var(--font-size-base);
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: var(--spacing-4);
+}
+
+.checkbox-group {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: var(--spacing-3);
+    margin-top: var(--spacing-2);
+}
+
+.checkbox-item {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    padding: var(--spacing-2);
+    border-radius: var(--radius-md);
+    background: var(--background-color);
+    border: 1px solid var(--border-color);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.checkbox-item:hover {
+    background: var(--surface-color);
+    border-color: var(--primary-color);
+}
+
+.checkbox-item input[type="checkbox"] {
+    margin: 0;
+    width: auto;
+    accent-color: var(--primary-color);
+}
+
+.checkbox-item:has(input:checked) {
+    background: rgba(37, 99, 235, 0.1);
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+}
+
+.profile-actions {
+    display: flex;
+    gap: var(--spacing-3);
+    justify-content: center;
+    margin-top: var(--spacing-4);
+    padding-top: var(--spacing-4);
+    border-top: 1px solid var(--border-color);
+}
+
 /* Results Section */
 .results-section {
     background: var(--surface-color);
@@ -442,6 +523,32 @@ body {
 
 .response-content p {
     margin-bottom: var(--spacing-3);
+}
+
+/* MathJax Styling */
+.response-content .MathJax {
+    font-size: 1.1em;
+}
+
+.response-content .MathJax_Display {
+    margin: var(--spacing-4) 0;
+    text-align: center;
+}
+
+.response-content .MathJax_Display .MathJax {
+    font-size: 1.2em;
+}
+
+/* Mathematische Formeln hervorheben */
+.response-content mjx-container {
+    display: inline-block;
+    margin: 0 2px;
+}
+
+.response-content mjx-container[display="true"] {
+    display: block;
+    text-align: center;
+    margin: var(--spacing-3) 0;
 }
 
 .response-content strong {

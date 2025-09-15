@@ -4,6 +4,7 @@ class MathTutorAI {
     constructor() {
         this.apiKey = localStorage.getItem('openai_api_key') || '';
         this.apiProvider = localStorage.getItem('api_provider') || 'openai';
+        this.userProfile = this.loadUserProfile();
         this.init();
     }
 
@@ -46,6 +47,15 @@ class MathTutorAI {
         // Results
         document.getElementById('close-results').addEventListener('click', () => {
             this.closeResults();
+        });
+
+        // Profile Management
+        document.getElementById('save-profile').addEventListener('click', () => {
+            this.saveUserProfile();
+        });
+
+        document.getElementById('reset-profile').addEventListener('click', () => {
+            this.resetUserProfile();
         });
 
         // Enter key for text input
@@ -219,7 +229,21 @@ class MathTutorAI {
 
         this.showLoading(true);
 
-        const prompt = `Erstelle eine Mathematik-Aufgabe für das Thema "${topic}" mit Schwierigkeit "${difficulty}" und Aufgabentyp "${taskType}". Die Aufgabe sollte für Abitur-Vorbereitung geeignet sein.`;
+        let prompt = `Erstelle eine Mathematik-Aufgabe für das Thema "${topic}" mit Schwierigkeit "${difficulty}" und Aufgabentyp "${taskType}".`;
+        
+        // Personalisiere den Prompt basierend auf dem Benutzerprofil
+        if (this.userProfile.learningGoal === 'abitur-prep') {
+            prompt += ' Die Aufgabe sollte für Abitur-Vorbereitung geeignet sein.';
+        } else if (this.userProfile.learningGoal === 'grade-improvement') {
+            prompt += ' Die Aufgabe sollte helfen, das Verständnis zu verbessern und Noten zu steigern.';
+        } else if (this.userProfile.learningGoal === 'concept-understanding') {
+            prompt += ' Die Aufgabe sollte das konzeptuelle Verständnis vertiefen.';
+        }
+
+        // Berücksichtige schwache Themen
+        if (this.userProfile.weakTopics && this.userProfile.weakTopics.length > 0) {
+            prompt += ` Berücksichtige dabei die Schwierigkeiten des Benutzers in: ${this.userProfile.weakTopics.join(', ')}.`;
+        }
 
         try {
             const response = await this.callAIAPI(prompt, 'generate');
@@ -233,9 +257,11 @@ class MathTutorAI {
     }
 
     async callAIAPI(prompt, type) {
-        const systemPrompt = type === 'analyze' 
+        const baseSystemPrompt = type === 'analyze' 
             ? 'Du bist ein erfahrener Mathematik-Tutor. Analysiere die gegebene Mathematik-Aufgabe oder -Frage und gib eine hilfreiche Antwort mit Schritt-für-Schritt-Lösung.'
             : 'Du bist ein erfahrener Mathematik-Lehrer. Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern.';
+        
+        const systemPrompt = this.getPersonalizedPrompt(baseSystemPrompt, type);
 
         const requestBody = {
             model: this.apiProvider === 'openai' ? 'gpt-3.5-turbo' : 'claude-3-sonnet-20240229',
@@ -304,16 +330,124 @@ class MathTutorAI {
         
         resultsSection.style.display = 'block';
         resultsSection.scrollIntoView({ behavior: 'smooth' });
+        
+        // MathJax nach dem Einfügen des Inhalts aktualisieren
+        if (window.MathJax) {
+            // Warten bis MathJax vollständig geladen ist
+            MathJax.startup.promise.then(() => {
+                MathJax.typesetPromise([resultsContent]).catch((err) => {
+                    console.log('MathJax Fehler:', err);
+                });
+            });
+        } else {
+            // Fallback: MathJax noch nicht geladen
+            setTimeout(() => {
+                if (window.MathJax) {
+                    MathJax.typesetPromise([resultsContent]).catch((err) => {
+                        console.log('MathJax Fehler (delayed):', err);
+                    });
+                }
+            }, 1000);
+        }
     }
 
     formatResponse(content) {
-        // Einfache Formatierung für Mathematik-Inhalte
-        return content
+        // Erweitere Formatierung für Mathematik-Inhalte mit LaTeX-Unterstützung
+        let formattedContent = content;
+        
+        // Bereinige den Inhalt vor der Konvertierung
+        formattedContent = this.cleanMathContent(formattedContent);
+        
+        // Konvertiere nur explizite mathematische Notationen zu LaTeX
+        formattedContent = this.convertMathNotation(formattedContent);
+        
+        // Standard-Formatierung
+        formattedContent = formattedContent
             .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
             .replace(/\*(.*?)\*/g, '<em>$1</em>')
             .replace(/\n\n/g, '</p><p>')
             .replace(/\n/g, '<br>')
             .replace(/^(.*)$/, '<p>$1</p>');
+        
+        return formattedContent;
+    }
+
+    cleanMathContent(content) {
+        // Bereinige den Inhalt von störenden Zeichen
+        let cleaned = content;
+        
+        // Entferne einzelne Backslashes, die nicht zu LaTeX-Befehlen gehören
+        cleaned = cleaned.replace(/\\(?![\w{}])/g, '');
+        
+        // Entferne isolierte Klammern, die nicht zu Formeln gehören
+        cleaned = cleaned.replace(/\\(?![()])/g, '');
+        
+        return cleaned;
+    }
+
+    convertMathNotation(content) {
+        // Konvertiere nur explizite LaTeX-Notationen, nicht normale Wörter
+        let converted = content;
+        
+        // Entferne bereits vorhandene Dollarzeichen, die nicht korrekt verarbeitet wurden
+        converted = converted.replace(/\$([^$]+)\$/g, '$1');
+        
+        // Nur LaTeX-Befehle mit Backslash konvertieren (sicherer)
+        // Wurzeln: \sqrt{x} -> \(\sqrt{x}\)
+        converted = converted.replace(/\\sqrt\{([^}]+)\}/g, '\\(\\sqrt{$1}\\)');
+        
+        // Brüche: \frac{a}{b} -> \(\frac{a}{b}\)
+        converted = converted.replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '\\(\\frac{$1}{$2}\\)');
+        
+        // Potenzen: sowohl x^{2} als auch x^2
+        converted = converted.replace(/([a-zA-Z0-9]+)\^\{([^}]+)\}/g, '\\($1^{$2}\\)');
+        converted = converted.replace(/([a-zA-Z0-9]+)\^([0-9]+)/g, '\\($1^{$2}\\)');
+        
+        // Indizes: nur wenn explizit LaTeX-Format x_{2}
+        converted = converted.replace(/([a-zA-Z0-9]+)_\{([^}]+)\}/g, '\\($1_{$2}\\)');
+        
+        // Nur explizite LaTeX-Befehle konvertieren
+        converted = converted.replace(/\\int/g, '\\(\\int\\)');
+        converted = converted.replace(/\\sum/g, '\\(\\sum\\)');
+        converted = converted.replace(/\\prod/g, '\\(\\prod\\)');
+        converted = converted.replace(/\\lim/g, '\\(\\lim\\)');
+        
+        // Griechische Buchstaben nur mit Backslash
+        converted = converted.replace(/\\alpha/g, '\\(\\alpha\\)');
+        converted = converted.replace(/\\beta/g, '\\(\\beta\\)');
+        converted = converted.replace(/\\gamma/g, '\\(\\gamma\\)');
+        converted = converted.replace(/\\delta/g, '\\(\\delta\\)');
+        converted = converted.replace(/\\epsilon/g, '\\(\\epsilon\\)');
+        converted = converted.replace(/\\pi/g, '\\(\\pi\\)');
+        converted = converted.replace(/\\sigma/g, '\\(\\sigma\\)');
+        converted = converted.replace(/\\omega/g, '\\(\\omega\\)');
+        
+        // Unendlichkeit: nur mit Backslash
+        converted = converted.replace(/\\infty/g, '\\(\\infty\\)');
+        
+        // Plusminus: nur mit Backslash
+        converted = converted.replace(/\\pm/g, '\\(\\pm\\)');
+        
+        // Ungleichungen: nur mit Backslash
+        converted = converted.replace(/\\leq/g, '\\(\\leq\\)');
+        converted = converted.replace(/\\geq/g, '\\(\\geq\\)');
+        
+        // Nicht gleich: nur mit Backslash
+        converted = converted.replace(/\\neq/g, '\\(\\neq\\)');
+        
+        // Teilmenge: nur mit Backslash
+        converted = converted.replace(/\\subset/g, '\\(\\subset\\)');
+        converted = converted.replace(/\\supset/g, '\\(\\supset\\)');
+        
+        // Element von: nur mit Backslash (NICHT das Wort "in")
+        converted = converted.replace(/\\in/g, '\\(\\in\\)');
+        
+        // Entferne störende Klammern, die nicht zu mathematischen Formeln gehören
+        // Entferne einzelne \( und \) die nicht zu Formeln gehören
+        converted = converted.replace(/\\\(/g, '');
+        converted = converted.replace(/\\\)/g, '');
+        
+        return converted;
     }
 
     clearTextInput() {
@@ -341,6 +475,126 @@ class MathTutorAI {
         setTimeout(() => {
             notification.remove();
         }, 3000);
+    }
+
+    // User Profile Management
+    loadUserProfile() {
+        const savedProfile = localStorage.getItem('user_profile');
+        if (savedProfile) {
+            const profile = JSON.parse(savedProfile);
+            this.populateProfileForm(profile);
+            return profile;
+        }
+        return this.getDefaultProfile();
+    }
+
+    getDefaultProfile() {
+        return {
+            name: '',
+            grade: '12',
+            learningGoal: 'abitur-prep',
+            weakTopics: [],
+            learningStyle: 'step-by-step',
+            sessionLength: 'medium',
+            createdAt: new Date().toISOString(),
+            lastUpdated: new Date().toISOString()
+        };
+    }
+
+    populateProfileForm(profile) {
+        document.getElementById('user-name').value = profile.name || '';
+        document.getElementById('user-grade').value = profile.grade || '12';
+        document.getElementById('learning-goal').value = profile.learningGoal || 'abitur-prep';
+        document.getElementById('learning-style').value = profile.learningStyle || 'step-by-step';
+        document.getElementById('session-length').value = profile.sessionLength || 'medium';
+
+        // Setze Checkboxen für schwache Themen
+        const weakTopicCheckboxes = document.querySelectorAll('#weak-topics input[type="checkbox"]');
+        console.log('Gefundene Checkboxen:', weakTopicCheckboxes.length);
+        console.log('Profil schwache Themen:', profile.weakTopics);
+        
+        weakTopicCheckboxes.forEach(checkbox => {
+            const isChecked = profile.weakTopics && profile.weakTopics.includes(checkbox.value);
+            checkbox.checked = isChecked;
+            console.log(`Checkbox ${checkbox.value}: ${isChecked}`);
+        });
+    }
+
+    saveUserProfile() {
+        const profile = {
+            name: document.getElementById('user-name').value.trim(),
+            grade: document.getElementById('user-grade').value,
+            learningGoal: document.getElementById('learning-goal').value,
+            weakTopics: this.getSelectedWeakTopics(),
+            learningStyle: document.getElementById('learning-style').value,
+            sessionLength: document.getElementById('session-length').value,
+            createdAt: this.userProfile.createdAt || new Date().toISOString(),
+            lastUpdated: new Date().toISOString()
+        };
+
+        // Debugging
+        console.log('Speichere Profil:', profile);
+        console.log('Ausgewählte schwache Themen:', profile.weakTopics);
+
+        // Validierung
+        if (!profile.name) {
+            this.showNotification('Bitte gib deinen Namen ein.', 'warning');
+            return;
+        }
+
+        this.userProfile = profile;
+        localStorage.setItem('user_profile', JSON.stringify(profile));
+        this.showNotification('Profil erfolgreich gespeichert!', 'success');
+        
+        // Aktualisiere KI-Prompts basierend auf dem Profil
+        this.updateAIPrompts();
+    }
+
+    getSelectedWeakTopics() {
+        const checkboxes = document.querySelectorAll('#weak-topics input[type="checkbox"]:checked');
+        return Array.from(checkboxes).map(cb => cb.value);
+    }
+
+    resetUserProfile() {
+        if (confirm('Möchtest du wirklich dein Profil zurücksetzen? Alle Daten gehen verloren.')) {
+            const defaultProfile = this.getDefaultProfile();
+            this.populateProfileForm(defaultProfile);
+            this.userProfile = defaultProfile;
+            localStorage.removeItem('user_profile');
+            this.showNotification('Profil wurde zurückgesetzt.', 'info');
+        }
+    }
+
+    updateAIPrompts() {
+        // Aktualisiere die System-Prompts basierend auf dem Benutzerprofil
+        console.log('KI-Prompts wurden basierend auf dem Profil aktualisiert:', this.userProfile);
+    }
+
+    getPersonalizedPrompt(basePrompt, type) {
+        // Erstelle personalisierte Prompts basierend auf dem Benutzerprofil
+        const profile = this.userProfile;
+        
+        let personalizedPrompt = basePrompt;
+        
+        if (profile.learningStyle === 'visual') {
+            personalizedPrompt += ' Verwende visuelle Elemente wie Diagramme oder Grafiken in deiner Erklärung.';
+        } else if (profile.learningStyle === 'step-by-step') {
+            personalizedPrompt += ' Erkläre jeden Schritt detailliert und strukturiert.';
+        } else if (profile.learningStyle === 'conceptual') {
+            personalizedPrompt += ' Fokussiere auf das konzeptuelle Verständnis und die Zusammenhänge.';
+        } else if (profile.learningStyle === 'practical') {
+            personalizedPrompt += ' Verwende viele praktische Beispiele und Anwendungen.';
+        }
+
+        if (profile.weakTopics && profile.weakTopics.length > 0) {
+            personalizedPrompt += ` Der Benutzer hat Schwierigkeiten mit: ${profile.weakTopics.join(', ')}. Berücksichtige das bei der Erklärung.`;
+        }
+
+        if (profile.grade) {
+            personalizedPrompt += ` Das Lernniveau entspricht Klasse ${profile.grade}.`;
+        }
+
+        return personalizedPrompt;
     }
 }
 

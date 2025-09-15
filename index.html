@@ -6,6 +6,31 @@
     <title>Adaptive Math Tutoring Assistant</title>
     <link rel="stylesheet" href="styles.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    
+    <!-- MathJax für mathematische Notationen -->
+    <script>
+        MathJax = {
+            tex: {
+                inlineMath: [['\\(', '\\)']],
+                displayMath: [['\\[', '\\]']],
+                processEscapes: true,
+                processEnvironments: true,
+                packages: {'[+]': ['ams', 'noerrors', 'noundefined']}
+            },
+            options: {
+                skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'],
+                ignoreHtmlClass: 'tex2jax_ignore',
+                processHtmlClass: 'tex2jax_process'
+            },
+            startup: {
+                ready() {
+                    MathJax.startup.defaultReady();
+                    console.log('MathJax ist bereit');
+                }
+            }
+        };
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 </head>
 <body>
     <!-- Header -->
@@ -51,6 +76,10 @@
                     <button class="tab-btn" data-tab="generate-task">
                         <i class="fas fa-magic"></i>
                         Aufgabe generieren
+                    </button>
+                    <button class="tab-btn" data-tab="user-profile">
+                        <i class="fas fa-user"></i>
+                        Profil
                     </button>
                 </div>
 
@@ -143,6 +172,108 @@
                                 <i class="fas fa-magic"></i>
                                 Aufgabe generieren
                             </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- User Profile Tab -->
+                <div class="tab-content" id="user-profile">
+                    <div class="input-container">
+                        <div class="input-header">
+                            <h3>Dein Lernprofil</h3>
+                            <p>Konfiguriere dein Profil für personalisierte Aufgaben und bessere Lernfortschritte:</p>
+                        </div>
+                        <div class="profile-form">
+                            <div class="profile-section">
+                                <h4><i class="fas fa-user-graduate"></i> Grundinformationen</h4>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="user-name">Name:</label>
+                                        <input type="text" id="user-name" placeholder="Dein Name">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="user-grade">Klasse/Stufe:</label>
+                                        <select id="user-grade">
+                                            <option value="10">Klasse 10</option>
+                                            <option value="11">Klasse 11</option>
+                                            <option value="12">Klasse 12</option>
+                                            <option value="abitur">Abitur-Vorbereitung</option>
+                                            <option value="university">Universität</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="profile-section">
+                                <h4><i class="fas fa-target"></i> Lernziele</h4>
+                                <div class="form-group">
+                                    <label for="learning-goal">Hauptziel:</label>
+                                    <select id="learning-goal">
+                                        <option value="abitur-prep">Abitur-Vorbereitung</option>
+                                        <option value="grade-improvement">Notenverbesserung</option>
+                                        <option value="concept-understanding">Verständnis vertiefen</option>
+                                        <option value="exam-prep">Prüfungsvorbereitung</option>
+                                        <option value="general-practice">Allgemeine Übung</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="weak-topics">Schwache Themen (mehrere möglich):</label>
+                                    <div class="checkbox-group">
+                                        <label class="checkbox-item">
+                                            <input type="checkbox" value="functions"> Funktionen
+                                        </label>
+                                        <label class="checkbox-item">
+                                            <input type="checkbox" value="integration"> Integration
+                                        </label>
+                                        <label class="checkbox-item">
+                                            <input type="checkbox" value="geometry"> Geometrie
+                                        </label>
+                                        <label class="checkbox-item">
+                                            <input type="checkbox" value="algebra"> Algebra
+                                        </label>
+                                        <label class="checkbox-item">
+                                            <input type="checkbox" value="statistics"> Statistik
+                                        </label>
+                                        <label class="checkbox-item">
+                                            <input type="checkbox" value="trigonometry"> Trigonometrie
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="profile-section">
+                                <h4><i class="fas fa-cog"></i> Lernpräferenzen</h4>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="learning-style">Lernstil:</label>
+                                        <select id="learning-style">
+                                            <option value="visual">Visuell (Grafiken, Diagramme)</option>
+                                            <option value="step-by-step">Schritt-für-Schritt</option>
+                                            <option value="conceptual">Konzeptuell</option>
+                                            <option value="practical">Praktisch (Beispiele)</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="session-length">Sitzungslänge:</label>
+                                        <select id="session-length">
+                                            <option value="short">Kurz (15-30 Min)</option>
+                                            <option value="medium">Mittel (30-60 Min)</option>
+                                            <option value="long">Lang (60+ Min)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="profile-actions">
+                                <button class="btn btn-primary" id="save-profile">
+                                    <i class="fas fa-save"></i>
+                                    Profil speichern
+                                </button>
+                                <button class="btn btn-secondary" id="reset-profile">
+                                    <i class="fas fa-undo"></i>
+                                    Zurücksetzen
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
