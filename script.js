@@ -218,9 +218,8 @@ class MathTutorAI {
     }
 
     async generateTask() {
-        const topic = document.getElementById('topic-select').value;
-        const difficulty = document.getElementById('difficulty-select').value;
-        const taskType = document.getElementById('task-type-select').value;
+        // DEBUG: Ignoriere alle Benutzereinstellungen und sende IMMER die Debug-Anfrage
+        console.log('=== DEBUG MODE: Force Debug Request ===');
 
         if (!this.apiKey) {
             this.showApiModal();
@@ -229,24 +228,32 @@ class MathTutorAI {
 
         this.showLoading(true);
 
-        let prompt = `Erstelle eine Mathematik-Aufgabe für das Thema "${topic}" mit Schwierigkeit "${difficulty}" und Aufgabentyp "${taskType}".`;
-        
-        // Personalisiere den Prompt basierend auf dem Benutzerprofil
-        if (this.userProfile.learningGoal === 'abitur-prep') {
-            prompt += ' Die Aufgabe sollte für Abitur-Vorbereitung geeignet sein.';
-        } else if (this.userProfile.learningGoal === 'grade-improvement') {
-            prompt += ' Die Aufgabe sollte helfen, das Verständnis zu verbessern und Noten zu steigern.';
-        } else if (this.userProfile.learningGoal === 'concept-understanding') {
-            prompt += ' Die Aufgabe sollte das konzeptuelle Verständnis vertiefen.';
-        }
+        // DEBUG: Feste Debug-Anfrage mit allen mathematischen Zeichen
+        const prompt = `Erstelle eine Mathematik-Aufgabe mit vielen verschiedenen mathematischen Symbolen wie Integralen, Summen, Produkten, Wurzeln, Brüchen, Potenzen, griechischen Buchstaben, trigonometrischen Funktionen, Logarithmen, Exponentialfunktionen, Ungleichungen, Mengenoperatoren, Unendlichkeit und Limites.`;
 
-        // Berücksichtige schwache Themen
-        if (this.userProfile.weakTopics && this.userProfile.weakTopics.length > 0) {
-            prompt += ` Berücksichtige dabei die Schwierigkeiten des Benutzers in: ${this.userProfile.weakTopics.join(', ')}.`;
-        }
+        console.log('Debug prompt:', prompt);
 
         try {
             const response = await this.callAIAPI(prompt, 'generate');
+            
+            // Validierung: Verhindere, dass der Prompt selbst angezeigt wird
+            if (response.includes('Erstelle eine Mathematik-Aufgabe') || 
+                response.includes('mathematischen Symbolen') ||
+                response.length < 50) {
+                console.warn('KI hat möglicherweise den Prompt selbst ausgegeben, versuche erneut...');
+                // Kurz warten und nochmal versuchen
+                setTimeout(async () => {
+                    try {
+                        const retryResponse = await this.callAIAPI(prompt, 'generate');
+                        this.displayResults(retryResponse);
+                    } catch (retryError) {
+                        console.error('Auch der Retry-Versuch fehlgeschlagen:', retryError);
+                        this.showNotification('Fehler bei der Aufgaben-Generierung. Bitte versuche es erneut.', 'error');
+                    }
+                }, 1000);
+                return;
+            }
+            
             this.displayResults(response);
         } catch (error) {
             console.error('Fehler bei der Aufgaben-Generierung:', error);
@@ -258,8 +265,33 @@ class MathTutorAI {
 
     async callAIAPI(prompt, type) {
         const baseSystemPrompt = type === 'analyze' 
-            ? 'Du bist ein erfahrener Mathematik-Tutor. Analysiere die gegebene Mathematik-Aufgabe oder -Frage und gib eine hilfreiche Antwort mit Schritt-für-Schritt-Lösung.'
-            : 'Du bist ein erfahrener Mathematik-Lehrer. Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern.';
+            ? `Du bist ein erfahrener Mathematik-Tutor mit Spezialisierung auf deutsche Schulmathematik. 
+
+WICHTIGE RICHTLINIEN für deine Antworten:
+1. Verwende korrekte LaTeX-Notation für alle mathematischen Ausdrücke
+2. Für Integrale: Schreibe \\int_{a}^{b} f(x) \\, dx (nicht int_{a}^{b} f(x) dx)
+3. Für Potenzen: Schreibe x^{2} oder x^2 (nicht x^2 ohne Klammern bei komplexen Ausdrücken)
+4. Für Brüche: Verwende \\frac{a}{b} für komplexe Brüche
+5. Für Wurzeln: Verwende \\sqrt{x} oder \\sqrt[n]{x}
+6. Gib immer Schritt-für-Schritt-Lösungen mit Erklärungen
+7. Verwende deutsche mathematische Terminologie
+8. Erkläre jeden Schritt verständlich für Schüler
+9. Gib am Ende eine Zusammenfassung der wichtigsten Punkte
+
+Analysiere die gegebene Mathematik-Aufgabe oder -Frage und gib eine hilfreiche Antwort mit detaillierter Schritt-für-Schritt-Lösung.`
+            : `Du bist ein erfahrener Mathematik-Lehrer mit Spezialisierung auf deutsche Schulmathematik.
+
+WICHTIGE RICHTLINIEN für Aufgaben-Generierung:
+1. Erstelle Aufgaben, die dem deutschen Lehrplan entsprechen
+2. Verwende korrekte LaTeX-Notation für alle mathematischen Ausdrücke
+3. Strukturiere die Aufgabe klar mit einer klaren Aufgabenstellung
+4. Berücksichtige das angegebene Schwierigkeitsniveau
+5. Verwende deutsche mathematische Terminologie
+6. Gib KEINE Lösung an - nur die Aufgabenstellung!
+
+WICHTIG: Gib nur die Aufgabenstellung aus, keine Lösung, keine Lösungshinweise, keine Erklärungen. Der Schüler soll die Aufgabe selbst lösen.
+
+Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern.`;
         
         const systemPrompt = this.getPersonalizedPrompt(baseSystemPrompt, type);
 
@@ -332,34 +364,23 @@ class MathTutorAI {
         resultsSection.scrollIntoView({ behavior: 'smooth' });
         
         // MathJax nach dem Einfügen des Inhalts aktualisieren
-        if (window.MathJax) {
-            // Warten bis MathJax vollständig geladen ist
-            MathJax.startup.promise.then(() => {
-                MathJax.typesetPromise([resultsContent]).catch((err) => {
-                    console.log('MathJax Fehler:', err);
-                });
-            });
-        } else {
-            // Fallback: MathJax noch nicht geladen
-            setTimeout(() => {
-                if (window.MathJax) {
-                    MathJax.typesetPromise([resultsContent]).catch((err) => {
-                        console.log('MathJax Fehler (delayed):', err);
-                    });
-                }
-            }, 1000);
-        }
+        this.renderMathJax(resultsContent);
     }
 
     formatResponse(content) {
-        // Erweitere Formatierung für Mathematik-Inhalte mit LaTeX-Unterstützung
+        // DEBUG: Erweitere Formatierung für Mathematik-Inhalte mit LaTeX-Unterstützung
         let formattedContent = content;
+        
+        console.log('=== DEBUG MATH FORMATTING ===');
+        console.log('1. Original content:', content);
         
         // Bereinige den Inhalt vor der Konvertierung
         formattedContent = this.cleanMathContent(formattedContent);
+        console.log('2. After cleaning:', formattedContent);
         
         // Konvertiere nur explizite mathematische Notationen zu LaTeX
         formattedContent = this.convertMathNotation(formattedContent);
+        console.log('3. After conversion:', formattedContent);
         
         // Standard-Formatierung
         formattedContent = formattedContent
@@ -369,6 +390,9 @@ class MathTutorAI {
             .replace(/\n/g, '<br>')
             .replace(/^(.*)$/, '<p>$1</p>');
         
+        console.log('4. Final formatted:', formattedContent);
+        console.log('=== END DEBUG ===');
+        
         return formattedContent;
     }
 
@@ -377,20 +401,23 @@ class MathTutorAI {
         let cleaned = content;
         
         // Entferne einzelne Backslashes, die nicht zu LaTeX-Befehlen gehören
-        cleaned = cleaned.replace(/\\(?![\w{}])/g, '');
+        // VORSICHT: Sehr konservativ, um keine mathematischen Ausdrücke zu beschädigen
+        cleaned = cleaned.replace(/\\(?![\w{}()\[\]\\])/g, '');
         
         // Entferne isolierte Klammern, die nicht zu Formeln gehören
-        cleaned = cleaned.replace(/\\(?![()])/g, '');
+        // VORSICHT: Diese Zeile könnte auch Probleme verursachen!
+        // cleaned = cleaned.replace(/\\(?![()])/g, '');
         
         return cleaned;
     }
 
     convertMathNotation(content) {
+        // DEBUG: LaTeX-Konvertierung temporär deaktiviert für Tests
         // Konvertiere nur explizite LaTeX-Notationen, nicht normale Wörter
         let converted = content;
         
-        // Entferne bereits vorhandene Dollarzeichen, die nicht korrekt verarbeitet wurden
-        converted = converted.replace(/\$([^$]+)\$/g, '$1');
+        // VORSICHT: Diese Zeile könnte Teile von Funktionen entfernen!
+        // converted = converted.replace(/\$([^$]+)\$/g, '$1');
         
         // Nur LaTeX-Befehle mit Backslash konvertieren (sicherer)
         // Wurzeln: \sqrt{x} -> \(\sqrt{x}\)
@@ -443,11 +470,88 @@ class MathTutorAI {
         converted = converted.replace(/\\in/g, '\\(\\in\\)');
         
         // Entferne störende Klammern, die nicht zu mathematischen Formeln gehören
-        // Entferne einzelne \( und \) die nicht zu Formeln gehören
-        converted = converted.replace(/\\\(/g, '');
-        converted = converted.replace(/\\\)/g, '');
+        // VORSICHT: Diese Zeilen könnten rote Klammern verursachen!
+        // converted = converted.replace(/\\\(/g, '');
+        // converted = converted.replace(/\\\)/g, '');
         
         return converted;
+    }
+
+    renderMathJax(element) {
+        // Verbesserte MathJax-Rendering-Funktion mit besserer Fehlerbehandlung
+        if (!window.MathJax) {
+            console.warn('MathJax ist nicht verfügbar');
+            return;
+        }
+
+        // Warten bis MathJax vollständig geladen ist
+        if (MathJax.startup && MathJax.startup.promise) {
+            MathJax.startup.promise.then(() => {
+                this.performMathJaxRendering(element);
+            }).catch((err) => {
+                console.error('MathJax Startup Fehler:', err);
+                this.fallbackMathJaxRendering(element);
+            });
+        } else {
+            // Fallback für ältere MathJax-Versionen
+            this.fallbackMathJaxRendering(element);
+        }
+    }
+
+    performMathJaxRendering(element) {
+        try {
+            // Verwende die neueste MathJax API
+            if (MathJax.typesetPromise) {
+                MathJax.typesetPromise([element]).then(() => {
+                    console.log('MathJax erfolgreich gerendert');
+                }).catch((err) => {
+                    console.error('MathJax Rendering Fehler:', err);
+                    this.handleMathJaxError(element, err);
+                });
+            } else if (MathJax.Hub && MathJax.Hub.Queue) {
+                // Fallback für MathJax 2.x
+                MathJax.Hub.Queue(["Typeset", MathJax.Hub, element]);
+            }
+        } catch (err) {
+            console.error('MathJax Rendering Exception:', err);
+            this.handleMathJaxError(element, err);
+        }
+    }
+
+    fallbackMathJaxRendering(element) {
+        // Fallback mit verzögertem Rendering
+        setTimeout(() => {
+            if (window.MathJax) {
+                this.performMathJaxRendering(element);
+            } else {
+                console.warn('MathJax nach Verzögerung immer noch nicht verfügbar');
+            }
+        }, 1000);
+    }
+
+    handleMathJaxError(element, error) {
+        // Zeige eine benutzerfreundliche Fehlermeldung
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'math-error';
+        errorDiv.innerHTML = `
+            <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 0.5rem; padding: 1rem; margin: 1rem 0;">
+                <p style="color: #dc2626; margin: 0;">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    Mathematische Formeln konnten nicht korrekt angezeigt werden. 
+                    Bitte versuche es erneut oder verwende eine andere Formulierung.
+                </p>
+            </div>
+        `;
+        
+        // Füge die Fehlermeldung vor dem Element ein
+        element.parentNode.insertBefore(errorDiv, element);
+        
+        // Entferne die Fehlermeldung nach 10 Sekunden
+        setTimeout(() => {
+            if (errorDiv.parentNode) {
+                errorDiv.parentNode.removeChild(errorDiv);
+            }
+        }, 10000);
     }
 
     clearTextInput() {
