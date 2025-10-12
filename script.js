@@ -10,9 +10,9 @@ class MathTutorAI {
 
     init() {
         this.setupEventListeners();
-        this.checkApiConfiguration();
         this.setupTabSwitching();
         this.setupImageUpload();
+        // API-Konfiguration wird jetzt im Profil-Tab verwaltet
     }
 
     setupEventListeners() {
@@ -58,6 +58,11 @@ class MathTutorAI {
             this.resetUserProfile();
         });
 
+        // API Key Toggle in Profile
+        document.getElementById('toggle-api-key').addEventListener('click', () => {
+            this.toggleApiKeyVisibility();
+        });
+
         // Enter key for text input
         document.getElementById('math-input').addEventListener('keydown', (e) => {
             if (e.ctrlKey && e.key === 'Enter') {
@@ -81,6 +86,11 @@ class MathTutorAI {
                 // Add active class to clicked button and corresponding content
                 button.classList.add('active');
                 document.getElementById(targetTab).classList.add('active');
+                
+                // Lade Profil neu, wenn Profil-Tab geöffnet wird
+                if (targetTab === 'user-profile' && this.userProfile) {
+                    this.populateProfileForm(this.userProfile);
+                }
             });
         });
     }
@@ -200,7 +210,9 @@ class MathTutorAI {
         }
 
         if (!this.apiKey) {
-            this.showApiModal();
+            this.showNotification('Bitte konfiguriere zuerst deinen API-Schlüssel im Profil-Tab.', 'warning');
+            // Wechsle automatisch zum Profil-Tab
+            document.querySelector('[data-tab="user-profile"]').click();
             return;
         }
 
@@ -218,46 +230,60 @@ class MathTutorAI {
     }
 
     async generateTask() {
-        // DEBUG: Ignoriere alle Benutzereinstellungen und sende IMMER die Debug-Anfrage
-        console.log('=== DEBUG MODE: Force Debug Request ===');
-
         if (!this.apiKey) {
-            this.showApiModal();
+            this.showNotification('Bitte konfiguriere zuerst deinen API-Schlüssel im Profil-Tab.', 'warning');
+            // Wechsle automatisch zum Profil-Tab
+            document.querySelector('[data-tab="user-profile"]').click();
             return;
         }
 
         this.showLoading(true);
 
-        // DEBUG: Feste Debug-Anfrage mit allen mathematischen Zeichen
-        const prompt = `Erstelle eine Mathematik-Aufgabe mit vielen verschiedenen mathematischen Symbolen wie Integralen, Summen, Produkten, Wurzeln, Brüchen, Potenzen, griechischen Buchstaben, trigonometrischen Funktionen, Logarithmen, Exponentialfunktionen, Ungleichungen, Mengenoperatoren, Unendlichkeit und Limites.`;
+        // Hole die ausgewählten Parameter
+        const topic = document.getElementById('topic-select').value;
+        const difficulty = document.getElementById('difficulty-select').value;
+        const taskType = document.getElementById('task-type-select').value;
 
-        console.log('Debug prompt:', prompt);
+        // Deutsche Übersetzungen für die Parameter
+        const topicNames = {
+            'functions': 'Funktionen',
+            'integration': 'Integration',
+            'geometry': 'Geometrie',
+            'algebra': 'Algebra',
+            'statistics': 'Statistik'
+        };
+
+        const difficultyNames = {
+            'easy': 'einfach',
+            'medium': 'mittel',
+            'hard': 'schwer'
+        };
+
+        const taskTypeNames = {
+            'conceptual': 'konzeptuelles Verständnis',
+            'word-problem': 'Textaufgabe',
+            'calculation': 'reine Berechnung'
+        };
+
+        const prompt = `Erstelle eine ${difficultyNames[difficulty]}e ${taskTypeNames[taskType]} zum Thema ${topicNames[topic]}.`;
+
+        console.log('Generiere Aufgabe mit:', { topic, difficulty, taskType, prompt });
 
         try {
             const response = await this.callAIAPI(prompt, 'generate');
-            
-            // Validierung: Verhindere, dass der Prompt selbst angezeigt wird
-            if (response.includes('Erstelle eine Mathematik-Aufgabe') || 
-                response.includes('mathematischen Symbolen') ||
-                response.length < 50) {
-                console.warn('KI hat möglicherweise den Prompt selbst ausgegeben, versuche erneut...');
-                // Kurz warten und nochmal versuchen
-                setTimeout(async () => {
-                    try {
-                        const retryResponse = await this.callAIAPI(prompt, 'generate');
-                        this.displayResults(retryResponse);
-                    } catch (retryError) {
-                        console.error('Auch der Retry-Versuch fehlgeschlagen:', retryError);
-                        this.showNotification('Fehler bei der Aufgaben-Generierung. Bitte versuche es erneut.', 'error');
-                    }
-                }, 1000);
-                return;
-            }
-            
-            this.displayResults(response);
+            this.displayResults(response, true); // true = es ist eine Aufgabe
         } catch (error) {
             console.error('Fehler bei der Aufgaben-Generierung:', error);
-            this.showNotification('Fehler bei der Aufgaben-Generierung. Bitte versuche es erneut.', 'error');
+            
+            // Detaillierte Fehlermeldung
+            let errorMessage = 'Fehler bei der Aufgaben-Generierung: ';
+            if (error.message) {
+                errorMessage += error.message;
+            } else {
+                errorMessage += 'Unbekannter Fehler. Bitte überprüfe deine API-Konfiguration.';
+            }
+            
+            this.showNotification(errorMessage, 'error');
         } finally {
             this.showLoading(false);
         }
@@ -267,27 +293,48 @@ class MathTutorAI {
         const baseSystemPrompt = type === 'analyze' 
             ? `Du bist ein erfahrener Mathematik-Tutor mit Spezialisierung auf deutsche Schulmathematik. 
 
-WICHTIGE RICHTLINIEN für deine Antworten:
-1. Verwende korrekte LaTeX-Notation für alle mathematischen Ausdrücke
-2. Für Integrale: Schreibe \\int_{a}^{b} f(x) \\, dx (nicht int_{a}^{b} f(x) dx)
-3. Für Potenzen: Schreibe x^{2} oder x^2 (nicht x^2 ohne Klammern bei komplexen Ausdrücken)
-4. Für Brüche: Verwende \\frac{a}{b} für komplexe Brüche
-5. Für Wurzeln: Verwende \\sqrt{x} oder \\sqrt[n]{x}
-6. Gib immer Schritt-für-Schritt-Lösungen mit Erklärungen
-7. Verwende deutsche mathematische Terminologie
-8. Erkläre jeden Schritt verständlich für Schüler
-9. Gib am Ende eine Zusammenfassung der wichtigsten Punkte
+KRITISCH WICHTIG - LaTeX-Formatierung:
+1. Verwende für INLINE mathematische Ausdrücke: $...$
+   Beispiel: Die Funktion $f(x) = x^2$ ist eine Parabel.
+2. Verwende für DISPLAY mathematische Ausdrücke: $$...$$
+   Beispiel: $$\\int_{0}^{1} x^2 \\, dx = \\frac{1}{3}$$
+3. NIEMALS einzelne Symbole wrappen - nur komplette Formeln!
+4. Korrekte LaTeX-Befehle:
+   - Integrale: $\\int_{a}^{b} f(x) \\, dx$
+   - Brüche: $\\frac{a}{b}$
+   - Wurzeln: $\\sqrt{x}$ oder $\\sqrt[n]{x}$
+   - Potenzen: $x^{2}$ oder $x^{n+1}$
+   - Griechische Buchstaben: $\\alpha, \\beta, \\pi$
+   - Summen: $\\sum_{i=1}^{n} i$
+   - Limites: $\\lim_{x \\to \\infty} f(x)$
+
+WICHTIGE RICHTLINIEN:
+1. Gib immer Schritt-für-Schritt-Lösungen mit Erklärungen
+2. Verwende deutsche mathematische Terminologie
+3. Erkläre jeden Schritt verständlich für Schüler
+4. Gib am Ende eine Zusammenfassung der wichtigsten Punkte
 
 Analysiere die gegebene Mathematik-Aufgabe oder -Frage und gib eine hilfreiche Antwort mit detaillierter Schritt-für-Schritt-Lösung.`
             : `Du bist ein erfahrener Mathematik-Lehrer mit Spezialisierung auf deutsche Schulmathematik.
 
+KRITISCH WICHTIG - LaTeX-Formatierung:
+1. Verwende für INLINE mathematische Ausdrücke: $...$
+   Beispiel: Berechne die Ableitung von $f(x) = x^3 + 2x$.
+2. Verwende für DISPLAY mathematische Ausdrücke: $$...$$
+   Beispiel: $$\\int_{0}^{\\pi} \\sin(x) \\, dx$$
+3. NIEMALS einzelne Symbole wrappen - nur komplette Formeln!
+4. Korrekte LaTeX-Befehle:
+   - Integrale: $\\int_{a}^{b} f(x) \\, dx$
+   - Brüche: $\\frac{a}{b}$
+   - Wurzeln: $\\sqrt{x}$
+   - Potenzen: $x^{2}$
+
 WICHTIGE RICHTLINIEN für Aufgaben-Generierung:
 1. Erstelle Aufgaben, die dem deutschen Lehrplan entsprechen
-2. Verwende korrekte LaTeX-Notation für alle mathematischen Ausdrücke
-3. Strukturiere die Aufgabe klar mit einer klaren Aufgabenstellung
-4. Berücksichtige das angegebene Schwierigkeitsniveau
-5. Verwende deutsche mathematische Terminologie
-6. Gib KEINE Lösung an - nur die Aufgabenstellung!
+2. Strukturiere die Aufgabe klar mit einer klaren Aufgabenstellung
+3. Berücksichtige das angegebene Schwierigkeitsniveau
+4. Verwende deutsche mathematische Terminologie
+5. Gib KEINE Lösung an - nur die Aufgabenstellung!
 
 WICHTIG: Gib nur die Aufgabenstellung aus, keine Lösung, keine Lösungshinweise, keine Erklärungen. Der Schüler soll die Aufgabe selbst lösen.
 
@@ -332,32 +379,165 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
         });
 
         if (!response.ok) {
-            throw new Error(`API-Fehler: ${response.status} ${response.statusText}`);
+            // Versuche, detaillierte Fehlerinformationen zu erhalten
+            let errorDetails = '';
+            try {
+                const errorData = await response.json();
+                console.error('API Error Details:', errorData);
+                errorDetails = errorData.error?.message || JSON.stringify(errorData);
+            } catch (e) {
+                errorDetails = response.statusText;
+            }
+            
+            throw new Error(`API-Fehler (${response.status}): ${errorDetails}`);
         }
 
         const data = await response.json();
+        console.log('API Response:', data);
         
         if (this.apiProvider === 'openai') {
+            if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+                throw new Error('Ungültige API-Antwort: ' + JSON.stringify(data));
+            }
             return data.choices[0].message.content;
         } else {
+            if (!data.content || !data.content[0]) {
+                throw new Error('Ungültige API-Antwort: ' + JSON.stringify(data));
+            }
             return data.content[0].text;
         }
     }
 
-    displayResults(content) {
+    displayResults(content, isTask = false) {
         const resultsSection = document.getElementById('results-section');
         const resultsContent = document.getElementById('results-content');
+        
+        // Speichere die aktuelle Aufgabe für spätere Referenz
+        if (isTask) {
+            this.currentTask = content;
+        }
+        
+        let interactionHTML = '';
+        
+        // Füge Interaktionsbereich hinzu, wenn es eine generierte Aufgabe ist
+        if (isTask) {
+            interactionHTML = `
+                <div class="solution-interaction">
+                    <div class="interaction-header">
+                        <i class="fas fa-pencil-alt"></i>
+                        <h4>Deine Lösung</h4>
+                    </div>
+                    
+                    <!-- Text Lösung -->
+                    <div class="solution-section">
+                        <label for="solution-input">Schriftliche Lösung:</label>
+                        <textarea 
+                            id="solution-input" 
+                            placeholder="Gib hier deine Lösung ein oder beschreibe deinen Lösungsansatz..."
+                            rows="6"
+                        ></textarea>
+                    </div>
+                    
+                    <!-- Zeichenbereich -->
+                    <div class="drawing-section">
+                        <div class="drawing-header">
+                            <label>Skizzen & Zeichnungen:</label>
+                            <div class="drawing-tabs">
+                                <button class="drawing-tab-btn active" data-canvas="coordinate">
+                                    <i class="fas fa-project-diagram"></i>
+                                    Koordinatensystem
+                                </button>
+                                <button class="drawing-tab-btn" data-canvas="grid">
+                                    <i class="fas fa-th"></i>
+                                    Kariertes Papier
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- Canvas Container -->
+                        <div class="canvas-container">
+                            <canvas id="coordinate-canvas" class="drawing-canvas active" width="800" height="600"></canvas>
+                            <canvas id="grid-canvas" class="drawing-canvas" width="800" height="600"></canvas>
+                        </div>
+                        
+                        <!-- Zeichentools -->
+                        <div class="drawing-tools">
+                            <div class="tool-group">
+                                <label>Werkzeug:</label>
+                                <button class="tool-btn active" data-tool="pen" title="Stift">
+                                    <i class="fas fa-pen"></i>
+                                </button>
+                                <button class="tool-btn" data-tool="eraser" title="Radiergummi">
+                                    <i class="fas fa-eraser"></i>
+                                </button>
+                                <button class="tool-btn" data-tool="line" title="Linie">
+                                    <i class="fas fa-minus"></i>
+                                </button>
+                            </div>
+                            
+                            <div class="tool-group">
+                                <label>Farbe:</label>
+                                <input type="color" id="pen-color" value="#000000" title="Stiftfarbe">
+                                <button class="color-preset" data-color="#000000" style="background: #000000;" title="Schwarz"></button>
+                                <button class="color-preset" data-color="#2563eb" style="background: #2563eb;" title="Blau"></button>
+                                <button class="color-preset" data-color="#ef4444" style="background: #ef4444;" title="Rot"></button>
+                                <button class="color-preset" data-color="#10b981" style="background: #10b981;" title="Grün"></button>
+                            </div>
+                            
+                            <div class="tool-group">
+                                <label>Stärke:</label>
+                                <input type="range" id="pen-width" min="1" max="10" value="2" title="Strichstärke">
+                                <span id="pen-width-display">2px</span>
+                            </div>
+                            
+                            <div class="tool-group">
+                                <button class="btn btn-secondary btn-sm" id="clear-canvas">
+                                    <i class="fas fa-trash"></i>
+                                    Löschen
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="interaction-actions">
+                        <button class="btn btn-primary" id="submit-solution">
+                            <i class="fas fa-check-circle"></i>
+                            Lösung überprüfen
+                        </button>
+                        <button class="btn btn-secondary" id="request-hint">
+                            <i class="fas fa-lightbulb"></i>
+                            Tipp anfordern
+                        </button>
+                        <button class="btn btn-secondary" id="show-solution">
+                            <i class="fas fa-eye"></i>
+                            Musterlösung anzeigen
+                        </button>
+                    </div>
+                </div>
+                <div id="feedback-area" style="display: none;">
+                    <div class="ai-response feedback-response">
+                        <div class="response-header">
+                            <i class="fas fa-comment-dots"></i>
+                            <span>KI-Feedback</span>
+                        </div>
+                        <div class="response-content" id="feedback-content">
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
         
         resultsContent.innerHTML = `
             <div class="ai-response">
                 <div class="response-header">
                     <i class="fas fa-robot"></i>
-                    <span>KI-Antwort</span>
+                    <span>${isTask ? 'Aufgabe' : 'KI-Antwort'}</span>
                 </div>
                 <div class="response-content">
                     ${this.formatResponse(content)}
                 </div>
             </div>
+            ${interactionHTML}
         `;
         
         resultsSection.style.display = 'block';
@@ -365,6 +545,572 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
         
         // MathJax nach dem Einfügen des Inhalts aktualisieren
         this.renderMathJax(resultsContent);
+        
+        // Event Listener für Interaktions-Buttons hinzufügen
+        if (isTask) {
+            this.setupInteractionListeners();
+            this.initializeCanvas();
+        }
+    }
+
+    initializeCanvas() {
+        // Initialisiere beide Canvas
+        this.coordinateCanvas = document.getElementById('coordinate-canvas');
+        this.gridCanvas = document.getElementById('grid-canvas');
+        
+        if (!this.coordinateCanvas || !this.gridCanvas) {
+            console.error('Canvas-Elemente nicht gefunden');
+            return;
+        }
+        
+        this.coordinateCtx = this.coordinateCanvas.getContext('2d');
+        this.gridCtx = this.gridCanvas.getContext('2d');
+        
+        // Aktiver Canvas
+        this.activeCanvas = this.coordinateCanvas;
+        this.activeCtx = this.coordinateCtx;
+        
+        // Zeichenzustand
+        this.isDrawing = false;
+        this.currentTool = 'pen';
+        this.currentColor = '#000000';
+        this.lineWidth = 2;
+        this.startX = 0;
+        this.startY = 0;
+        
+        // Zeichne Hintergründe
+        this.drawCoordinateSystem();
+        this.drawGridPaper();
+        
+        // Speichere Original-Hintergründe
+        this.coordinateBackground = this.coordinateCtx.getImageData(0, 0, this.coordinateCanvas.width, this.coordinateCanvas.height);
+        this.gridBackground = this.gridCtx.getImageData(0, 0, this.gridCanvas.width, this.gridCanvas.height);
+        
+        // Canvas-Nutzung tracken
+        this.coordinateCanvasUsed = false;
+        this.gridCanvasUsed = false;
+        
+        // Setup Canvas Event Listeners
+        this.setupCanvasListeners();
+    }
+
+    drawCoordinateSystem() {
+        const canvas = this.coordinateCanvas;
+        const ctx = this.coordinateCtx;
+        const width = canvas.width;
+        const height = canvas.height;
+        const centerX = width / 2;
+        const centerY = height / 2;
+        const gridSize = 40;
+        
+        // Hintergrund
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, width, height);
+        
+        // Gitterlinien
+        ctx.strokeStyle = '#e5e7eb';
+        ctx.lineWidth = 1;
+        
+        // Vertikale Linien
+        for (let x = 0; x <= width; x += gridSize) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, height);
+            ctx.stroke();
+        }
+        
+        // Horizontale Linien
+        for (let y = 0; y <= height; y += gridSize) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(width, y);
+            ctx.stroke();
+        }
+        
+        // Achsen
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 2;
+        
+        // X-Achse
+        ctx.beginPath();
+        ctx.moveTo(0, centerY);
+        ctx.lineTo(width, centerY);
+        ctx.stroke();
+        
+        // Y-Achse
+        ctx.beginPath();
+        ctx.moveTo(centerX, 0);
+        ctx.lineTo(centerX, height);
+        ctx.stroke();
+        
+        // Pfeile
+        const arrowSize = 10;
+        // X-Achse Pfeil
+        ctx.beginPath();
+        ctx.moveTo(width - arrowSize, centerY - arrowSize/2);
+        ctx.lineTo(width, centerY);
+        ctx.lineTo(width - arrowSize, centerY + arrowSize/2);
+        ctx.stroke();
+        
+        // Y-Achse Pfeil
+        ctx.beginPath();
+        ctx.moveTo(centerX - arrowSize/2, arrowSize);
+        ctx.lineTo(centerX, 0);
+        ctx.lineTo(centerX + arrowSize/2, arrowSize);
+        ctx.stroke();
+        
+        // Beschriftung
+        ctx.fillStyle = '#000000';
+        ctx.font = '14px Arial';
+        ctx.fillText('x', width - 20, centerY + 20);
+        ctx.fillText('y', centerX + 10, 20);
+        ctx.fillText('0', centerX + 5, centerY + 15);
+    }
+
+    drawGridPaper() {
+        const canvas = this.gridCanvas;
+        const ctx = this.gridCtx;
+        const width = canvas.width;
+        const height = canvas.height;
+        const smallGrid = 20;
+        const largeGrid = 100;
+        
+        // Hintergrund
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, width, height);
+        
+        // Kleine Kästchen
+        ctx.strokeStyle = '#e5e7eb';
+        ctx.lineWidth = 1;
+        
+        for (let x = 0; x <= width; x += smallGrid) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, height);
+            ctx.stroke();
+        }
+        
+        for (let y = 0; y <= height; y += smallGrid) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(width, y);
+            ctx.stroke();
+        }
+        
+        // Große Kästchen (dicker)
+        ctx.strokeStyle = '#9ca3af';
+        ctx.lineWidth = 2;
+        
+        for (let x = 0; x <= width; x += largeGrid) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, height);
+            ctx.stroke();
+        }
+        
+        for (let y = 0; y <= height; y += largeGrid) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(width, y);
+            ctx.stroke();
+        }
+    }
+
+    setupCanvasListeners() {
+        // Canvas Tab-Switching
+        const tabButtons = document.querySelectorAll('.drawing-tab-btn');
+        tabButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const canvasId = btn.getAttribute('data-canvas');
+                this.switchCanvas(canvasId);
+                
+                // Update active tab
+                tabButtons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+        });
+        
+        // Tool-Buttons
+        const toolButtons = document.querySelectorAll('.tool-btn');
+        toolButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.currentTool = btn.getAttribute('data-tool');
+                toolButtons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+        });
+        
+        // Color Picker
+        const colorPicker = document.getElementById('pen-color');
+        if (colorPicker) {
+            colorPicker.addEventListener('input', (e) => {
+                this.currentColor = e.target.value;
+            });
+        }
+        
+        // Color Presets
+        const colorPresets = document.querySelectorAll('.color-preset');
+        colorPresets.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const color = btn.getAttribute('data-color');
+                this.currentColor = color;
+                if (colorPicker) colorPicker.value = color;
+            });
+        });
+        
+        // Line Width
+        const widthSlider = document.getElementById('pen-width');
+        const widthDisplay = document.getElementById('pen-width-display');
+        if (widthSlider && widthDisplay) {
+            widthSlider.addEventListener('input', (e) => {
+                this.lineWidth = parseInt(e.target.value);
+                widthDisplay.textContent = this.lineWidth + 'px';
+            });
+        }
+        
+        // Clear Canvas
+        const clearBtn = document.getElementById('clear-canvas');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                this.clearActiveCanvas();
+            });
+        }
+        
+        // Drawing Events
+        this.activeCanvas.addEventListener('mousedown', (e) => this.startDrawing(e));
+        this.activeCanvas.addEventListener('mousemove', (e) => this.draw(e));
+        this.activeCanvas.addEventListener('mouseup', () => this.stopDrawing());
+        this.activeCanvas.addEventListener('mouseout', () => this.stopDrawing());
+        
+        // Touch Events für mobile Geräte
+        this.activeCanvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousedown', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            this.activeCanvas.dispatchEvent(mouseEvent);
+        });
+        
+        this.activeCanvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousemove', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            this.activeCanvas.dispatchEvent(mouseEvent);
+        });
+        
+        this.activeCanvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            const mouseEvent = new MouseEvent('mouseup', {});
+            this.activeCanvas.dispatchEvent(mouseEvent);
+        });
+    }
+
+    switchCanvas(canvasId) {
+        const canvases = document.querySelectorAll('.drawing-canvas');
+        canvases.forEach(c => c.classList.remove('active'));
+        
+        if (canvasId === 'coordinate') {
+            this.activeCanvas = this.coordinateCanvas;
+            this.activeCtx = this.coordinateCtx;
+            this.coordinateCanvas.classList.add('active');
+        } else {
+            this.activeCanvas = this.gridCanvas;
+            this.activeCtx = this.gridCtx;
+            this.gridCanvas.classList.add('active');
+        }
+        
+        // Update event listeners
+        this.removeCanvasEventListeners();
+        this.activeCanvas.addEventListener('mousedown', (e) => this.startDrawing(e));
+        this.activeCanvas.addEventListener('mousemove', (e) => this.draw(e));
+        this.activeCanvas.addEventListener('mouseup', () => this.stopDrawing());
+        this.activeCanvas.addEventListener('mouseout', () => this.stopDrawing());
+    }
+
+    removeCanvasEventListeners() {
+        // Cleanup old listeners (simplified - in production you'd track these properly)
+    }
+
+    getCanvasCoordinates(e) {
+        const rect = this.activeCanvas.getBoundingClientRect();
+        const scaleX = this.activeCanvas.width / rect.width;
+        const scaleY = this.activeCanvas.height / rect.height;
+        
+        return {
+            x: (e.clientX - rect.left) * scaleX,
+            y: (e.clientY - rect.top) * scaleY
+        };
+    }
+
+    startDrawing(e) {
+        this.isDrawing = true;
+        const coords = this.getCanvasCoordinates(e);
+        this.startX = coords.x;
+        this.startY = coords.y;
+        
+        // Markiere Canvas als benutzt
+        if (this.activeCanvas === this.coordinateCanvas) {
+            this.coordinateCanvasUsed = true;
+        } else {
+            this.gridCanvasUsed = true;
+        }
+        
+        if (this.currentTool === 'pen') {
+            this.activeCtx.beginPath();
+            this.activeCtx.moveTo(coords.x, coords.y);
+        }
+    }
+
+    draw(e) {
+        if (!this.isDrawing) return;
+        
+        const coords = this.getCanvasCoordinates(e);
+        
+        if (this.currentTool === 'pen') {
+            this.activeCtx.strokeStyle = this.currentColor;
+            this.activeCtx.lineWidth = this.lineWidth;
+            this.activeCtx.lineCap = 'round';
+            this.activeCtx.lineJoin = 'round';
+            
+            this.activeCtx.lineTo(coords.x, coords.y);
+            this.activeCtx.stroke();
+        } else if (this.currentTool === 'eraser') {
+            // Restore background for eraser
+            const eraserSize = this.lineWidth * 5;
+            const background = this.activeCanvas === this.coordinateCanvas 
+                ? this.coordinateBackground 
+                : this.gridBackground;
+            
+            this.activeCtx.putImageData(
+                background,
+                0, 0,
+                coords.x - eraserSize/2,
+                coords.y - eraserSize/2,
+                eraserSize,
+                eraserSize
+            );
+        }
+    }
+
+    stopDrawing() {
+        if (this.isDrawing && this.currentTool === 'line') {
+            // Draw line from start to current position
+            const coords = this.getCanvasCoordinates(event);
+            this.activeCtx.strokeStyle = this.currentColor;
+            this.activeCtx.lineWidth = this.lineWidth;
+            this.activeCtx.beginPath();
+            this.activeCtx.moveTo(this.startX, this.startY);
+            this.activeCtx.lineTo(coords.x, coords.y);
+            this.activeCtx.stroke();
+        }
+        
+        this.isDrawing = false;
+    }
+
+    clearActiveCanvas() {
+        if (confirm('Möchtest du wirklich die Zeichnung löschen?')) {
+            if (this.activeCanvas === this.coordinateCanvas) {
+                this.activeCtx.putImageData(this.coordinateBackground, 0, 0);
+                this.coordinateCanvasUsed = false;
+            } else {
+                this.activeCtx.putImageData(this.gridBackground, 0, 0);
+                this.gridCanvasUsed = false;
+            }
+        }
+    }
+
+    getCanvasImages() {
+        const images = [];
+        
+        if (this.coordinateCanvasUsed) {
+            images.push({
+                name: 'Koordinatensystem-Skizze',
+                data: this.coordinateCanvas.toDataURL('image/png')
+            });
+        }
+        
+        if (this.gridCanvasUsed) {
+            images.push({
+                name: 'Karierte-Notizen',
+                data: this.gridCanvas.toDataURL('image/png')
+            });
+        }
+        
+        return images;
+    }
+
+    setupInteractionListeners() {
+        const submitBtn = document.getElementById('submit-solution');
+        const hintBtn = document.getElementById('request-hint');
+        const solutionBtn = document.getElementById('show-solution');
+        const solutionInput = document.getElementById('solution-input');
+        
+        if (submitBtn) {
+            submitBtn.addEventListener('click', () => this.submitSolution());
+        }
+        
+        if (hintBtn) {
+            hintBtn.addEventListener('click', () => this.requestHint());
+        }
+        
+        if (solutionBtn) {
+            solutionBtn.addEventListener('click', () => this.showSolution());
+        }
+        
+        // Strg+Enter zum Absenden der Lösung
+        if (solutionInput) {
+            solutionInput.addEventListener('keydown', (e) => {
+                if (e.ctrlKey && e.key === 'Enter') {
+                    this.submitSolution();
+                }
+            });
+        }
+    }
+
+    async submitSolution() {
+        const solutionInput = document.getElementById('solution-input');
+        const userSolution = solutionInput.value.trim();
+        
+        // Hole Zeichnungen
+        const canvasImages = this.getCanvasImages();
+        
+        if (!userSolution && canvasImages.length === 0) {
+            this.showNotification('Bitte gib eine Lösung ein oder erstelle eine Zeichnung.', 'warning');
+            return;
+        }
+        
+        this.showLoading(true);
+        
+        try {
+            let drawingInfo = '';
+            if (canvasImages.length > 0) {
+                drawingInfo = '\n\nDer Schüler hat folgende Skizzen angefertigt:\n';
+                canvasImages.forEach(img => {
+                    drawingInfo += `- ${img.name}\n`;
+                });
+                drawingInfo += '\n(Hinweis: Die Skizzen können derzeit nicht direkt analysiert werden, aber du kannst basierend auf der Beschreibung des Schülers Feedback geben.)';
+            }
+            
+            const prompt = `
+Aufgabe:
+${this.currentTask}
+
+Lösung des Schülers:
+${userSolution || '(Keine schriftliche Lösung, nur Zeichnung)'}
+${drawingInfo}
+
+Bitte analysiere die Lösung des Schülers und gib konstruktives Feedback:
+1. Ist die Lösung korrekt? Wenn ja, gratuliere dem Schüler.
+2. Falls Fehler vorhanden sind, erkläre sie verständlich, ohne die komplette Lösung zu verraten.
+3. Gib Hinweise, wie der Schüler weitermachen kann.
+4. Lobe richtige Ansätze und Teillösungen.
+5. Verwende eine ermutigende und unterstützende Sprache.
+${canvasImages.length > 0 ? '6. Wenn der Schüler Zeichnungen erstellt hat, gib allgemeine Hinweise zu visuellen Ansätzen.' : ''}
+`;
+            
+            const response = await this.callAIAPI(prompt, 'analyze');
+            this.displayFeedback(response, canvasImages);
+        } catch (error) {
+            console.error('Fehler beim Überprüfen der Lösung:', error);
+            this.showNotification('Fehler beim Überprüfen der Lösung: ' + error.message, 'error');
+        } finally {
+            this.showLoading(false);
+        }
+    }
+
+    async requestHint() {
+        this.showLoading(true);
+        
+        try {
+            const prompt = `
+Aufgabe:
+${this.currentTask}
+
+Der Schüler braucht einen Tipp zur Lösung dieser Aufgabe.
+Bitte gib einen hilfreichen Hinweis, der:
+1. NICHT die komplette Lösung verrät
+2. Den Schüler in die richtige Richtung lenkt
+3. Zum selbstständigen Denken anregt
+4. Eventuell ein Beispiel oder eine verwandte Formel nennt
+5. Kurz und prägnant ist
+`;
+            
+            const response = await this.callAIAPI(prompt, 'analyze');
+            this.displayFeedback(response);
+        } catch (error) {
+            console.error('Fehler beim Abrufen des Tipps:', error);
+            this.showNotification('Fehler beim Abrufen des Tipps: ' + error.message, 'error');
+        } finally {
+            this.showLoading(false);
+        }
+    }
+
+    async showSolution() {
+        // Bestätige, dass der Benutzer die Lösung sehen möchte
+        if (!confirm('Möchtest du wirklich die Musterlösung sehen? Versuche es am besten erst selbst oder fordere einen Tipp an.')) {
+            return;
+        }
+        
+        this.showLoading(true);
+        
+        try {
+            const prompt = `
+Aufgabe:
+${this.currentTask}
+
+Bitte erstelle eine vollständige und detaillierte Musterlösung mit:
+1. Schritt-für-Schritt-Erklärung
+2. Allen notwendigen Zwischenschritten
+3. Mathematisch korrekter Notation
+4. Erklärungen zu jedem wichtigen Schritt
+5. Dem finalen Ergebnis
+
+Verwende eine klare Struktur und deutsche mathematische Terminologie.
+`;
+            
+            const response = await this.callAIAPI(prompt, 'analyze');
+            this.displayFeedback(response);
+        } catch (error) {
+            console.error('Fehler beim Abrufen der Lösung:', error);
+            this.showNotification('Fehler beim Abrufen der Lösung: ' + error.message, 'error');
+        } finally {
+            this.showLoading(false);
+        }
+    }
+
+    displayFeedback(content, canvasImages = []) {
+        const feedbackArea = document.getElementById('feedback-area');
+        const feedbackContent = document.getElementById('feedback-content');
+        
+        if (feedbackArea && feedbackContent) {
+            let imagesHTML = '';
+            if (canvasImages.length > 0) {
+                imagesHTML = '<div class="submitted-drawings"><h5>Deine Zeichnungen:</h5><div class="drawing-previews">';
+                canvasImages.forEach(img => {
+                    imagesHTML += `
+                        <div class="drawing-preview">
+                            <img src="${img.data}" alt="${img.name}">
+                            <p>${img.name}</p>
+                        </div>
+                    `;
+                });
+                imagesHTML += '</div></div>';
+            }
+            
+            feedbackContent.innerHTML = imagesHTML + this.formatResponse(content);
+            feedbackArea.style.display = 'block';
+            
+            // Scrolle zum Feedback
+            feedbackArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            
+            // MathJax rendern
+            this.renderMathJax(feedbackContent);
+        }
     }
 
     formatResponse(content) {
@@ -397,82 +1143,37 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
     }
 
     cleanMathContent(content) {
-        // Bereinige den Inhalt von störenden Zeichen
+        // Bereinige den Inhalt, ohne mathematische Ausdrücke zu beschädigen
         let cleaned = content;
         
-        // Entferne einzelne Backslashes, die nicht zu LaTeX-Befehlen gehören
-        // VORSICHT: Sehr konservativ, um keine mathematischen Ausdrücke zu beschädigen
-        cleaned = cleaned.replace(/\\(?![\w{}()\[\]\\])/g, '');
-        
-        // Entferne isolierte Klammern, die nicht zu Formeln gehören
-        // VORSICHT: Diese Zeile könnte auch Probleme verursachen!
-        // cleaned = cleaned.replace(/\\(?![()])/g, '');
+        // Entferne nur offensichtlich falsche Escapes, nicht mathematische
+        // Keine aggressive Bereinigung mehr - lasse LaTeX-Befehle intakt
         
         return cleaned;
     }
 
     convertMathNotation(content) {
-        // DEBUG: LaTeX-Konvertierung temporär deaktiviert für Tests
-        // Konvertiere nur explizite LaTeX-Notationen, nicht normale Wörter
+        // Intelligente LaTeX-Konvertierung - nur wenn noch nicht konvertiert
         let converted = content;
         
-        // VORSICHT: Diese Zeile könnte Teile von Funktionen entfernen!
-        // converted = converted.replace(/\$([^$]+)\$/g, '$1');
+        // Prüfe ob bereits MathJax-Delimiter vorhanden sind
+        const hasDelimiters = /\\\(.*?\\\)|\\\[.*?\\\]/.test(content);
         
-        // Nur LaTeX-Befehle mit Backslash konvertieren (sicherer)
-        // Wurzeln: \sqrt{x} -> \(\sqrt{x}\)
-        converted = converted.replace(/\\sqrt\{([^}]+)\}/g, '\\(\\sqrt{$1}\\)');
+        if (hasDelimiters) {
+            // Inhalt hat bereits MathJax-Delimiter, keine weitere Konvertierung nötig
+            console.log('Content already has MathJax delimiters, skipping conversion');
+            return converted;
+        }
         
-        // Brüche: \frac{a}{b} -> \(\frac{a}{b}\)
-        converted = converted.replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '\\(\\frac{$1}{$2}\\)');
+        // Konvertiere $...$ zu \(...\) für inline math
+        converted = converted.replace(/\$([^\$]+)\$/g, '\\($1\\)');
         
-        // Potenzen: sowohl x^{2} als auch x^2
-        converted = converted.replace(/([a-zA-Z0-9]+)\^\{([^}]+)\}/g, '\\($1^{$2}\\)');
-        converted = converted.replace(/([a-zA-Z0-9]+)\^([0-9]+)/g, '\\($1^{$2}\\)');
+        // Konvertiere $$...$$ zu \[...\] für display math
+        converted = converted.replace(/\$\$([^\$]+)\$\$/g, '\\[$1\\]');
         
-        // Indizes: nur wenn explizit LaTeX-Format x_{2}
-        converted = converted.replace(/([a-zA-Z0-9]+)_\{([^}]+)\}/g, '\\($1_{$2}\\)');
-        
-        // Nur explizite LaTeX-Befehle konvertieren
-        converted = converted.replace(/\\int/g, '\\(\\int\\)');
-        converted = converted.replace(/\\sum/g, '\\(\\sum\\)');
-        converted = converted.replace(/\\prod/g, '\\(\\prod\\)');
-        converted = converted.replace(/\\lim/g, '\\(\\lim\\)');
-        
-        // Griechische Buchstaben nur mit Backslash
-        converted = converted.replace(/\\alpha/g, '\\(\\alpha\\)');
-        converted = converted.replace(/\\beta/g, '\\(\\beta\\)');
-        converted = converted.replace(/\\gamma/g, '\\(\\gamma\\)');
-        converted = converted.replace(/\\delta/g, '\\(\\delta\\)');
-        converted = converted.replace(/\\epsilon/g, '\\(\\epsilon\\)');
-        converted = converted.replace(/\\pi/g, '\\(\\pi\\)');
-        converted = converted.replace(/\\sigma/g, '\\(\\sigma\\)');
-        converted = converted.replace(/\\omega/g, '\\(\\omega\\)');
-        
-        // Unendlichkeit: nur mit Backslash
-        converted = converted.replace(/\\infty/g, '\\(\\infty\\)');
-        
-        // Plusminus: nur mit Backslash
-        converted = converted.replace(/\\pm/g, '\\(\\pm\\)');
-        
-        // Ungleichungen: nur mit Backslash
-        converted = converted.replace(/\\leq/g, '\\(\\leq\\)');
-        converted = converted.replace(/\\geq/g, '\\(\\geq\\)');
-        
-        // Nicht gleich: nur mit Backslash
-        converted = converted.replace(/\\neq/g, '\\(\\neq\\)');
-        
-        // Teilmenge: nur mit Backslash
-        converted = converted.replace(/\\subset/g, '\\(\\subset\\)');
-        converted = converted.replace(/\\supset/g, '\\(\\supset\\)');
-        
-        // Element von: nur mit Backslash (NICHT das Wort "in")
-        converted = converted.replace(/\\in/g, '\\(\\in\\)');
-        
-        // Entferne störende Klammern, die nicht zu mathematischen Formeln gehören
-        // VORSICHT: Diese Zeilen könnten rote Klammern verursachen!
-        // converted = converted.replace(/\\\(/g, '');
-        // converted = converted.replace(/\\\)/g, '');
+        // Schütze bereits korrekte LaTeX-Ausdrücke vor doppelter Konvertierung
+        // Wrappen komplexer mathematischer Ausdrücke nur wenn sie noch nicht gewrappt sind
+        // und NICHT einzelne Befehle wrappen
         
         return converted;
     }
@@ -606,22 +1307,84 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
     }
 
     populateProfileForm(profile) {
-        document.getElementById('user-name').value = profile.name || '';
-        document.getElementById('user-grade').value = profile.grade || '12';
-        document.getElementById('learning-goal').value = profile.learningGoal || 'abitur-prep';
-        document.getElementById('learning-style').value = profile.learningStyle || 'step-by-step';
-        document.getElementById('session-length').value = profile.sessionLength || 'medium';
+        // Warte kurz, um sicherzustellen, dass alle DOM-Elemente verfügbar sind
+        setTimeout(() => {
+            const userNameEl = document.getElementById('user-name');
+            const userGradeEl = document.getElementById('user-grade');
+            const learningGoalEl = document.getElementById('learning-goal');
+            const learningStyleEl = document.getElementById('learning-style');
+            const sessionLengthEl = document.getElementById('session-length');
+            
+            if (userNameEl) userNameEl.value = profile.name || '';
+            if (userGradeEl) userGradeEl.value = profile.grade || '12';
+            if (learningGoalEl) learningGoalEl.value = profile.learningGoal || 'abitur-prep';
+            if (learningStyleEl) learningStyleEl.value = profile.learningStyle || 'step-by-step';
+            if (sessionLengthEl) sessionLengthEl.value = profile.sessionLength || 'medium';
 
-        // Setze Checkboxen für schwache Themen
-        const weakTopicCheckboxes = document.querySelectorAll('#weak-topics input[type="checkbox"]');
-        console.log('Gefundene Checkboxen:', weakTopicCheckboxes.length);
-        console.log('Profil schwache Themen:', profile.weakTopics);
+            // Setze Checkboxen für schwache Themen
+            const weakTopicCheckboxes = document.querySelectorAll('#weak-topics input[type="checkbox"]');
+            console.log('Gefundene Checkboxen:', weakTopicCheckboxes.length);
+            console.log('Profil schwache Themen:', profile.weakTopics);
+            
+            if (weakTopicCheckboxes.length > 0 && profile.weakTopics) {
+                weakTopicCheckboxes.forEach(checkbox => {
+                    const isChecked = profile.weakTopics.includes(checkbox.value);
+                    checkbox.checked = isChecked;
+                    console.log(`Checkbox ${checkbox.value}: ${isChecked}`);
+                });
+            } else {
+                console.warn('Checkboxen noch nicht verfügbar oder keine weakTopics im Profil');
+            }
+
+            // Lade API-Einstellungen
+            this.loadApiSettings();
+        }, 100);
+    }
+
+    loadApiSettings() {
+        // Lade aktuelle API-Einstellungen
+        const apiKey = localStorage.getItem('openai_api_key') || '';
+        const provider = localStorage.getItem('api_provider') || 'openai';
+
+        const apiKeyInput = document.getElementById('profile-api-key');
+        const providerSelect = document.getElementById('profile-api-provider');
+
+        if (apiKeyInput) apiKeyInput.value = apiKey;
+        if (providerSelect) providerSelect.value = provider;
+
+        // Aktualisiere Status
+        this.updateApiKeyStatus();
+    }
+
+    updateApiKeyStatus() {
+        const apiKey = localStorage.getItem('openai_api_key') || '';
+        const statusElement = document.getElementById('api-key-status');
         
-        weakTopicCheckboxes.forEach(checkbox => {
-            const isChecked = profile.weakTopics && profile.weakTopics.includes(checkbox.value);
-            checkbox.checked = isChecked;
-            console.log(`Checkbox ${checkbox.value}: ${isChecked}`);
-        });
+        if (statusElement) {
+            if (apiKey && apiKey.length > 0) {
+                statusElement.textContent = 'Konfiguriert ✓';
+                statusElement.style.color = 'var(--success-color)';
+            } else {
+                statusElement.textContent = 'Nicht konfiguriert';
+                statusElement.style.color = 'var(--error-color)';
+            }
+        }
+    }
+
+    toggleApiKeyVisibility() {
+        const apiKeyInput = document.getElementById('profile-api-key');
+        const toggleButton = document.getElementById('toggle-api-key');
+        const icon = toggleButton.querySelector('i');
+        
+        if (apiKeyInput.type === 'password') {
+            apiKeyInput.type = 'text';
+            icon.classList.remove('fa-eye');
+            icon.classList.add('fa-eye-slash');
+        } else {
+            apiKeyInput.type = 'password';
+            icon.classList.remove('fa-eye-slash');
+            icon.classList.add('fa-eye');
+        }
     }
 
     saveUserProfile() {
@@ -636,9 +1399,14 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
             lastUpdated: new Date().toISOString()
         };
 
+        // Speichere API-Einstellungen
+        const apiKey = document.getElementById('profile-api-key').value.trim();
+        const apiProvider = document.getElementById('profile-api-provider').value;
+
         // Debugging
         console.log('Speichere Profil:', profile);
         console.log('Ausgewählte schwache Themen:', profile.weakTopics);
+        console.log('API Provider:', apiProvider);
 
         // Validierung
         if (!profile.name) {
@@ -646,9 +1414,23 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
             return;
         }
 
+        // Speichere Profil
         this.userProfile = profile;
         localStorage.setItem('user_profile', JSON.stringify(profile));
-        this.showNotification('Profil erfolgreich gespeichert!', 'success');
+
+        // Speichere API-Einstellungen
+        if (apiKey) {
+            this.apiKey = apiKey;
+            localStorage.setItem('openai_api_key', apiKey);
+        }
+        
+        this.apiProvider = apiProvider;
+        localStorage.setItem('api_provider', apiProvider);
+
+        // Aktualisiere Status
+        this.updateApiKeyStatus();
+        
+        this.showNotification('Profil und API-Einstellungen erfolgreich gespeichert!', 'success');
         
         // Aktualisiere KI-Prompts basierend auf dem Profil
         this.updateAIPrompts();
