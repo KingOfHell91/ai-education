@@ -31,8 +31,90 @@
         };
     </script>
     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    
+    <!-- Auth Services (laden vor script.js) -->
+    <script src="config/aws-config.js"></script>
+    <script src="auth/auth-mock.js"></script>
+    <script src="auth/auth-service.js"></script>
+    
+    <!-- Database Services -->
+    <script src="data/schemas.js"></script>
+    <script src="data/db-mock.js"></script>
+    <script src="data/dynamodb-adapter.js"></script>
+    <script src="data/db-service.js"></script>
+    
+    <!-- Tracking Services -->
+    <script src="tracking/competency-tracker.js"></script>
+    <script src="tracking/performance-tracker.js"></script>
+    <script src="tracking/behavior-tracker.js"></script>
+    
+    <!-- AI Services -->
+    <script src="ai/data-aggregator.js"></script>
+    <script src="ai/prompt-advisor.js"></script>
 </head>
 <body>
+    <!-- Auth Check Script (muss vor dem Rest laden) -->
+    <script>
+        // Prüfe Auth-Status beim Laden der Seite
+        (async function() {
+            try {
+                const authService = new AuthService();
+                const user = await authService.getCurrentUser();
+                
+                if (!user) {
+                    // Nicht eingeloggt, redirect zu Login
+                    console.log('[Auth Check] No active session, redirecting to login...');
+                    window.location.href = 'login.html';
+                } else {
+                    // Eingeloggt, zeige User-Info
+                    console.log('[Auth Check] User authenticated:', user.email);
+                    
+                    // Fülle User-Info im Header
+                    const userInfo = document.getElementById('user-info');
+                    const userNameDisplay = document.getElementById('user-name-display');
+                    const userEmailDisplay = document.getElementById('user-email-display');
+                    const userAvatarInitials = document.getElementById('user-avatar-initials');
+                    
+                    if (userInfo && userNameDisplay && userEmailDisplay && userAvatarInitials) {
+                        // Setze User-Daten
+                        const userName = user.attributes?.name || user.email.split('@')[0];
+                        userNameDisplay.textContent = userName;
+                        userEmailDisplay.textContent = user.email;
+                        
+                        // Erstelle Initialen für Avatar
+                        const initials = userName
+                            .split(' ')
+                            .map(n => n[0])
+                            .join('')
+                            .toUpperCase()
+                            .substring(0, 2);
+                        userAvatarInitials.textContent = initials;
+                        
+                        // Zeige User-Info
+                        userInfo.style.display = 'flex';
+                    }
+                    
+                    // Setup Logout Button
+                    const logoutBtn = document.getElementById('logout-btn');
+                    if (logoutBtn) {
+                        logoutBtn.addEventListener('click', async () => {
+                            try {
+                                await authService.signOut();
+                                window.location.href = 'login.html';
+                            } catch (error) {
+                                console.error('[Auth] Logout error:', error);
+                                alert('Fehler beim Abmelden: ' + error.message);
+                            }
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error('[Auth Check] Error:', error);
+                // Bei Fehler zur Sicherheit auf Login-Seite
+                window.location.href = 'login.html';
+            }
+        })();
+    </script>
     <!-- Header -->
     <header class="header">
         <div class="container">
@@ -48,6 +130,20 @@
                     <li><a href="#analytics">Analytics</a></li>
                 </ul>
             </nav>
+            <!-- User Info (wird dynamisch befüllt nach Login) -->
+            <div class="user-info" id="user-info" style="display: none;">
+                <div class="user-avatar" id="user-avatar">
+                    <span id="user-avatar-initials">U</span>
+                </div>
+                <div class="user-details">
+                    <div class="user-name" id="user-name-display">User Name</div>
+                    <div class="user-email" id="user-email-display">user@email.com</div>
+                </div>
+                <button class="logout-btn" id="logout-btn">
+                    <i class="fas fa-sign-out-alt"></i>
+                    Abmelden
+                </button>
+            </div>
         </div>
     </header>
 
@@ -125,9 +221,25 @@
                             </div>
                             <div class="image-preview" id="image-preview" style="display: none;">
                                 <img id="preview-img" src="" alt="Vorschau">
-                                <button class="btn btn-danger" id="remove-image">
+                                <button class="btn btn-danger btn-sm" id="remove-image">
                                     <i class="fas fa-times"></i>
                                     Entfernen
+                                </button>
+                            </div>
+                        </div>
+                        <div class="image-description-area" id="image-description-area" style="display: none;">
+                            <div class="form-group">
+                                <label for="image-description">Beschreibe dein Anliegen (optional):</label>
+                                <textarea 
+                                    id="image-description" 
+                                    placeholder="z.B. 'Erkläre mir bitte Aufgabe 3' oder 'Ich verstehe nicht, wie man hier vorgeht' oder lass es leer für eine allgemeine Analyse..."
+                                    rows="3"
+                                ></textarea>
+                            </div>
+                            <div class="input-actions">
+                                <button class="btn btn-primary" id="analyze-image-btn">
+                                    <i class="fas fa-brain"></i>
+                                    Mit KI analysieren
                                 </button>
                             </div>
                         </div>

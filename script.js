@@ -2,10 +2,66 @@
 
 class MathTutorAI {
     constructor() {
+        // Auth Service
+        this.authService = new AuthService();
+        this.currentUser = null;
+        this.userId = null;
+        
+        // Legacy API Keys (für Backward-Compatibility)
         this.apiKey = localStorage.getItem('openai_api_key') || '';
         this.apiProvider = localStorage.getItem('api_provider') || 'openai';
         this.userProfile = this.loadUserProfile();
-        this.init();
+        this.uploadedImageData = null;
+        
+        // Initialisiere mit Auth-Check
+        this.initWithAuth();
+    }
+    
+    async initWithAuth() {
+        try {
+            // Hole aktuellen User
+            this.currentUser = await this.authService.getCurrentUser();
+            if (this.currentUser) {
+                this.userId = this.currentUser.userId;
+                console.log('[MathTutorAI] Initialized with user:', this.userId);
+                
+                // Initialisiere Tracking-System
+                await this.initializeTracking();
+            } else {
+                console.warn('[MathTutorAI] No authenticated user');
+            }
+            
+            // Reguläre Initialisierung
+            this.init();
+        } catch (error) {
+            console.error('[MathTutorAI] Init error:', error);
+            this.init(); // Fallback zur regulären Init
+        }
+    }
+    
+    async initializeTracking() {
+        try {
+            // Initialisiere DB Service
+            this.dbService = new DBService();
+            
+            // Initialisiere Tracker
+            this.competencyTracker = new CompetencyTracker(this.dbService);
+            this.performanceTracker = new PerformanceTracker(this.dbService);
+            this.behaviorTracker = new BehaviorTracker(this.dbService);
+            
+            // Initialisiere AI Services
+            this.dataAggregator = new DataAggregator(
+                this.competencyTracker,
+                this.performanceTracker,
+                this.behaviorTracker
+            );
+            this.promptAdvisor = new PromptAdvisor(this.dataAggregator);
+            
+            console.log('[MathTutorAI] Tracking system initialized');
+        } catch (error) {
+            console.error('[MathTutorAI] Tracking initialization error:', error);
+            // Continue without tracking
+        }
     }
 
     init() {
@@ -24,6 +80,11 @@ class MathTutorAI {
         // Clear Button
         document.getElementById('clear-btn').addEventListener('click', () => {
             this.clearTextInput();
+        });
+
+        // Image Analysis
+        document.getElementById('analyze-image-btn').addEventListener('click', () => {
+            this.analyzeImageInput();
         });
 
         // Generate Task Button
@@ -67,6 +128,13 @@ class MathTutorAI {
         document.getElementById('math-input').addEventListener('keydown', (e) => {
             if (e.ctrlKey && e.key === 'Enter') {
                 this.analyzeTextInput();
+            }
+        });
+
+        // Enter key for image description
+        document.getElementById('image-description').addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key === 'Enter') {
+                this.analyzeImageInput();
             }
         });
     }
@@ -150,10 +218,15 @@ class MathTutorAI {
             const previewImg = document.getElementById('preview-img');
             const imagePreview = document.getElementById('image-preview');
             const uploadZone = document.getElementById('upload-zone');
+            const descriptionArea = document.getElementById('image-description-area');
 
+            // Speichere die Bilddaten für die Analyse
+            this.uploadedImageData = e.target.result;
+            
             previewImg.src = e.target.result;
             imagePreview.style.display = 'block';
             uploadZone.style.display = 'none';
+            descriptionArea.style.display = 'block';
         };
         reader.readAsDataURL(file);
     }
@@ -162,10 +235,17 @@ class MathTutorAI {
         const imagePreview = document.getElementById('image-preview');
         const uploadZone = document.getElementById('upload-zone');
         const imageInput = document.getElementById('image-input');
+        const descriptionArea = document.getElementById('image-description-area');
+        const descriptionInput = document.getElementById('image-description');
 
         imagePreview.style.display = 'none';
         uploadZone.style.display = 'block';
+        descriptionArea.style.display = 'none';
         imageInput.value = '';
+        descriptionInput.value = '';
+        
+        // Lösche die gespeicherten Bilddaten
+        this.uploadedImageData = null;
     }
 
     checkApiConfiguration() {
@@ -229,6 +309,38 @@ class MathTutorAI {
         }
     }
 
+    async analyzeImageInput() {
+        const descriptionInput = document.getElementById('image-description').value.trim();
+        
+        if (!this.uploadedImageData) {
+            this.showNotification('Bitte lade zuerst ein Bild hoch.', 'warning');
+            return;
+        }
+
+        if (!this.apiKey) {
+            this.showNotification('Bitte konfiguriere zuerst deinen API-Schlüssel im Profil-Tab.', 'warning');
+            // Wechsle automatisch zum Profil-Tab
+            document.querySelector('[data-tab="user-profile"]').click();
+            return;
+        }
+
+        this.showLoading(true);
+        
+        try {
+            const prompt = descriptionInput || 'Analysiere bitte diese Mathematik-Aufgabe und erkläre sie Schritt für Schritt.';
+            const response = await this.callAIAPI(prompt, 'analyze', this.uploadedImageData);
+            this.displayResults(response);
+            
+            // Lösche das Bild und die Beschreibung nach erfolgreicher Analyse
+            this.removeImage();
+        } catch (error) {
+            console.error('Fehler bei der KI-Analyse:', error);
+            this.showNotification('Fehler bei der KI-Analyse. Bitte versuche es erneut.', 'error');
+        } finally {
+            this.showLoading(false);
+        }
+    }
+
     async generateTask() {
         if (!this.apiKey) {
             this.showNotification('Bitte konfiguriere zuerst deinen API-Schlüssel im Profil-Tab.', 'warning');
@@ -269,9 +381,17 @@ class MathTutorAI {
 
         console.log('Generiere Aufgabe mit:', { topic, difficulty, taskType, prompt });
 
+        // Start Performance Tracking
+        if (this.performanceTracker) {
+            this.performanceTracker.startTask(topic, difficulty);
+        }
+
         try {
-            const response = await this.callAIAPI(prompt, 'generate');
+            const response = await this.callAIAPI(prompt, 'generate', null, topic);
             this.displayResults(response, true); // true = es ist eine Aufgabe
+            
+            // Store current task context
+            this.currentTaskContext = { topic, difficulty, taskType };
         } catch (error) {
             console.error('Fehler bei der Aufgaben-Generierung:', error);
             
@@ -289,7 +409,7 @@ class MathTutorAI {
         }
     }
 
-    async callAIAPI(prompt, type) {
+    async callAIAPI(prompt, type, imageData = null, topic = null, intervention = null) {
         const baseSystemPrompt = type === 'analyze' 
             ? `Du bist ein erfahrener Mathematik-Tutor mit Spezialisierung auf deutsche Schulmathematik. 
 
@@ -340,36 +460,96 @@ WICHTIG: Gib nur die Aufgabenstellung aus, keine Lösung, keine Lösungshinweise
 
 Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern.`;
         
-        const systemPrompt = this.getPersonalizedPrompt(baseSystemPrompt, type);
+        const systemPrompt = await this.getPersonalizedPrompt(baseSystemPrompt, type, topic, intervention);
+
+        // Bestimme das richtige Modell basierend auf Bild-Upload
+        let model;
+        if (this.apiProvider === 'openai') {
+            model = imageData ? 'gpt-4o' : 'gpt-3.5-turbo';
+        } else {
+            model = 'claude-3-5-sonnet-20241022';
+        }
+
+        // Erstelle die Nachrichten mit Bild-Unterstützung
+        let userMessage;
+        if (imageData && this.apiProvider === 'openai') {
+            // OpenAI Vision Format
+            userMessage = {
+                role: 'user',
+                content: [
+                    {
+                        type: 'text',
+                        text: prompt
+                    },
+                    {
+                        type: 'image_url',
+                        image_url: {
+                            url: imageData
+                        }
+                    }
+                ]
+            };
+        } else if (imageData && this.apiProvider === 'anthropic') {
+            // Claude Vision Format
+            const base64Data = imageData.split(',')[1];
+            const mimeType = imageData.split(';')[0].split(':')[1];
+            
+            userMessage = {
+                role: 'user',
+                content: [
+                    {
+                        type: 'image',
+                        source: {
+                            type: 'base64',
+                            media_type: mimeType,
+                            data: base64Data
+                        }
+                    },
+                    {
+                        type: 'text',
+                        text: prompt
+                    }
+                ]
+            };
+        } else {
+            // Kein Bild - Standard-Format
+            userMessage = {
+                role: 'user',
+                content: prompt
+            };
+        }
 
         const requestBody = {
-            model: this.apiProvider === 'openai' ? 'gpt-3.5-turbo' : 'claude-3-sonnet-20240229',
-            messages: [
+            model: model,
+            messages: this.apiProvider === 'anthropic' ? [userMessage] : [
                 {
                     role: 'system',
                     content: systemPrompt
                 },
-                {
-                    role: 'user',
-                    content: prompt
-                }
+                userMessage
             ],
-            max_tokens: 1000,
+            max_tokens: 2000,
             temperature: 0.7
         };
+
+        // Anthropic-spezifische Parameter
+        if (this.apiProvider === 'anthropic') {
+            requestBody.system = systemPrompt;
+        }
 
         const apiUrl = this.apiProvider === 'openai' 
             ? 'https://api.openai.com/v1/chat/completions'
             : 'https://api.anthropic.com/v1/messages';
 
         const headers = {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${this.apiKey}`
+            'Content-Type': 'application/json'
         };
 
-        if (this.apiProvider === 'anthropic') {
+        if (this.apiProvider === 'openai') {
+            headers['Authorization'] = `Bearer ${this.apiKey}`;
+        } else {
             headers['x-api-key'] = this.apiKey;
-            delete headers['Authorization'];
+            headers['anthropic-version'] = '2023-06-01';
         }
 
         const response = await fetch(apiUrl, {
@@ -1013,7 +1193,38 @@ Bitte analysiere die Lösung des Schülers und gib konstruktives Feedback:
 ${canvasImages.length > 0 ? '6. Wenn der Schüler Zeichnungen erstellt hat, gib allgemeine Hinweise zu visuellen Ansätzen.' : ''}
 `;
             
-            const response = await this.callAIAPI(prompt, 'analyze');
+            const response = await this.callAIAPI(prompt, 'analyze', null, this.currentTaskContext?.topic);
+            
+            // TODO: Parse response to determine success
+            const success = response.toLowerCase().includes('korrekt') || response.toLowerCase().includes('richtig');
+            
+            // Log Performance
+            if (this.userId && this.performanceTracker && this.currentTaskContext) {
+                await this.performanceTracker.logPerformance(this.userId, {
+                    topic: this.currentTaskContext.topic,
+                    taskType: 'solve',
+                    success: success,
+                    difficulty: this.currentTaskContext.difficulty,
+                    showedSolution: false
+                });
+                
+                // Update Competency
+                if (this.competencyTracker) {
+                    await this.competencyTracker.updateAfterTask(this.userId, this.currentTaskContext.topic, {
+                        success,
+                        timeSpent: this.performanceTracker.currentTaskStart?.timeSpent || 0
+                    });
+                }
+                
+                // Log Behavior
+                if (this.behaviorTracker) {
+                    await this.behaviorTracker.trackSelfSolveAttempt(this.userId, {
+                        topic: this.currentTaskContext.topic,
+                        success
+                    });
+                }
+            }
+            
             this.displayFeedback(response, canvasImages);
         } catch (error) {
             console.error('Fehler beim Überprüfen der Lösung:', error);
@@ -1025,6 +1236,18 @@ ${canvasImages.length > 0 ? '6. Wenn der Schüler Zeichnungen erstellt hat, gib 
 
     async requestHint() {
         this.showLoading(true);
+        
+        // Track hint usage
+        if (this.performanceTracker) {
+            this.performanceTracker.recordHintUsed();
+        }
+        
+        // Log Behavior
+        if (this.userId && this.behaviorTracker) {
+            await this.behaviorTracker.trackHintRequest(this.userId, {
+                topic: this.currentTaskContext?.topic
+            });
+        }
         
         try {
             const prompt = `
@@ -1040,7 +1263,7 @@ Bitte gib einen hilfreichen Hinweis, der:
 5. Kurz und prägnant ist
 `;
             
-            const response = await this.callAIAPI(prompt, 'analyze');
+            const response = await this.callAIAPI(prompt, 'hint', null, this.currentTaskContext?.topic);
             this.displayFeedback(response);
         } catch (error) {
             console.error('Fehler beim Abrufen des Tipps:', error);
@@ -1054,6 +1277,20 @@ Bitte gib einen hilfreichen Hinweis, der:
         // Bestätige, dass der Benutzer die Lösung sehen möchte
         if (!confirm('Möchtest du wirklich die Musterlösung sehen? Versuche es am besten erst selbst oder fordere einen Tipp an.')) {
             return;
+        }
+        
+        // Log Behavior und prüfe auf Intervention
+        let intervention = null;
+        if (this.userId && this.behaviorTracker) {
+            const result = await this.behaviorTracker.trackSolutionRequest(this.userId, {
+                topic: this.currentTaskContext?.topic
+            });
+            
+            // Speichere Intervention für Prompt-Anpassung (kein Alert mehr!)
+            if (result.intervention && result.intervention.type === 'prompt_advice') {
+                intervention = result.intervention;
+                console.log('[MathTutorAI] Intervention aktiv:', intervention);
+            }
         }
         
         this.showLoading(true);
@@ -1073,8 +1310,23 @@ Bitte erstelle eine vollständige und detaillierte Musterlösung mit:
 Verwende eine klare Struktur und deutsche mathematische Terminologie.
 `;
             
-            const response = await this.callAIAPI(prompt, 'analyze');
+            const response = await this.callAIAPI(prompt, 'solution', null, this.currentTaskContext?.topic, intervention);
+            
+            // Log Performance (failed task - showed solution)
+            if (this.userId && this.performanceTracker && this.currentTaskContext) {
+                await this.performanceTracker.logPerformance(this.userId, {
+                    topic: this.currentTaskContext.topic,
+                    taskType: 'solve',
+                    success: false,
+                    difficulty: this.currentTaskContext.difficulty,
+                    showedSolution: true
+                });
+            }
+            
             this.displayFeedback(response);
+            
+            // Aktiviere Follow-up Chat nach Musterlösung
+            this.enableFollowUpChat();
         } catch (error) {
             console.error('Fehler beim Abrufen der Lösung:', error);
             this.showNotification('Fehler beim Abrufen der Lösung: ' + error.message, 'error');
@@ -1456,30 +1708,164 @@ Verwende eine klare Struktur und deutsche mathematische Terminologie.
         console.log('KI-Prompts wurden basierend auf dem Profil aktualisiert:', this.userProfile);
     }
 
-    getPersonalizedPrompt(basePrompt, type) {
-        // Erstelle personalisierte Prompts basierend auf dem Benutzerprofil
-        const profile = this.userProfile;
+    enableFollowUpChat() {
+        // Füge Chat-Bereich nach der Musterlösung hinzu
+        const feedbackArea = document.getElementById('feedback-area');
+        if (!feedbackArea) return;
         
+        // Prüfe ob Chat-Bereich schon existiert
+        let followUpSection = document.getElementById('followup-chat-section');
+        if (followUpSection) {
+            followUpSection.style.display = 'block';
+            return;
+        }
+        
+        // Erstelle neuen Chat-Bereich
+        followUpSection = document.createElement('div');
+        followUpSection.id = 'followup-chat-section';
+        followUpSection.className = 'followup-chat-section';
+        followUpSection.innerHTML = `
+            <div class="followup-header">
+                <i class="fas fa-comments"></i>
+                <h4>Hast du noch Fragen zur Lösung?</h4>
+            </div>
+            <div class="followup-messages" id="followup-messages"></div>
+            <div class="followup-input-area">
+                <textarea 
+                    id="followup-input" 
+                    placeholder="Stelle hier deine Frage zur Lösung..."
+                    rows="3"
+                ></textarea>
+                <button id="followup-send-btn" class="btn btn-primary">
+                    <i class="fas fa-paper-plane"></i>
+                    Frage senden
+                </button>
+            </div>
+        `;
+        
+        // Füge nach feedback-area ein
+        feedbackArea.parentNode.insertBefore(followUpSection, feedbackArea.nextSibling);
+        
+        // Event Listener für Send-Button
+        const sendBtn = document.getElementById('followup-send-btn');
+        const input = document.getElementById('followup-input');
+        
+        if (sendBtn && input) {
+            const sendFollowUp = async () => {
+                const question = input.value.trim();
+                if (!question) return;
+                
+                // Zeige User-Frage
+                this.addFollowUpMessage(question, 'user');
+                input.value = '';
+                
+                // Sende an KI
+                try {
+                    this.showLoading(true);
+                    const prompt = `
+Kontext: Der Schüler hat sich gerade die Musterlösung für folgende Aufgabe angesehen:
+
+${this.currentTask}
+
+Er hat nun eine Folgefrage:
+${question}
+
+Beantworte die Frage verständlich und gehe gezielt auf seine Unsicherheit ein. Beziehe dich auf die Musterlösung und erkläre die relevanten Konzepte noch einmal.
+`;
+                    const response = await this.callAIAPI(prompt, 'analyze', null, this.currentTaskContext?.topic);
+                    this.addFollowUpMessage(response, 'ai');
+                } catch (error) {
+                    console.error('Fehler bei Follow-up Frage:', error);
+                    this.showNotification('Fehler: ' + error.message, 'error');
+                } finally {
+                    this.showLoading(false);
+                }
+            };
+            
+            sendBtn.addEventListener('click', sendFollowUp);
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && e.ctrlKey) {
+                    sendFollowUp();
+                }
+            });
+        }
+    }
+    
+    addFollowUpMessage(content, sender) {
+        const messagesContainer = document.getElementById('followup-messages');
+        if (!messagesContainer) return;
+        
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `followup-message followup-message-${sender}`;
+        
+        if (sender === 'user') {
+            messageDiv.innerHTML = `
+                <div class="message-header">
+                    <i class="fas fa-user"></i>
+                    <span>Du</span>
+                </div>
+                <div class="message-content">${this.escapeHtml(content)}</div>
+            `;
+        } else {
+            messageDiv.innerHTML = `
+                <div class="message-header">
+                    <i class="fas fa-robot"></i>
+                    <span>KI-Tutor</span>
+                </div>
+                <div class="message-content">${this.formatResponse(content)}</div>
+            `;
+        }
+        
+        messagesContainer.appendChild(messageDiv);
+        
+        // Scrolle zu neuer Nachricht
+        messageDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        
+        // Rendere MathJax für KI-Antworten
+        if (sender === 'ai') {
+            this.renderMathJax(messageDiv);
+        }
+    }
+    
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    async getPersonalizedPrompt(basePrompt, type, topic = null, intervention = null) {
+        // Erweiterte Personalisierung mit AI-Advice-System
         let personalizedPrompt = basePrompt;
         
-        if (profile.learningStyle === 'visual') {
-            personalizedPrompt += ' Verwende visuelle Elemente wie Diagramme oder Grafiken in deiner Erklärung.';
-        } else if (profile.learningStyle === 'step-by-step') {
-            personalizedPrompt += ' Erkläre jeden Schritt detailliert und strukturiert.';
-        } else if (profile.learningStyle === 'conceptual') {
-            personalizedPrompt += ' Fokussiere auf das konzeptuelle Verständnis und die Zusammenhänge.';
-        } else if (profile.learningStyle === 'practical') {
-            personalizedPrompt += ' Verwende viele praktische Beispiele und Anwendungen.';
-        }
+        // Legacy Profil-Personalisierung (Backward Compatibility)
+        const profile = this.userProfile;
+        if (profile) {
+            if (profile.learningStyle === 'visual') {
+                personalizedPrompt += '\nVerwende visuelle Elemente wie Diagramme oder Grafiken in deiner Erklärung.';
+            } else if (profile.learningStyle === 'step-by-step') {
+                personalizedPrompt += '\nErkläre jeden Schritt detailliert und strukturiert.';
+            } else if (profile.learningStyle === 'conceptual') {
+                personalizedPrompt += '\nFokussiere auf das konzeptuelle Verständnis und die Zusammenhänge.';
+            } else if (profile.learningStyle === 'practical') {
+                personalizedPrompt += '\nVerwende viele praktische Beispiele und Anwendungen.';
+            }
 
-        if (profile.weakTopics && profile.weakTopics.length > 0) {
-            personalizedPrompt += ` Der Benutzer hat Schwierigkeiten mit: ${profile.weakTopics.join(', ')}. Berücksichtige das bei der Erklärung.`;
+            if (profile.grade) {
+                personalizedPrompt += `\nDas Lernniveau entspricht Klasse ${profile.grade}.`;
+            }
         }
-
-        if (profile.grade) {
-            personalizedPrompt += ` Das Lernniveau entspricht Klasse ${profile.grade}.`;
+        
+        // Neues AI-Advice-System
+        if (this.userId && this.promptAdvisor) {
+            try {
+                const advice = await this.promptAdvisor.generateAdvice(this.userId, topic, type, intervention);
+                personalizedPrompt += advice;
+            } catch (error) {
+                console.error('[MathTutorAI] Failed to generate AI advice:', error);
+                // Continue with basic personalization
+            }
         }
-
+        
         return personalizedPrompt;
     }
 }
