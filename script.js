@@ -11,7 +11,12 @@ class MathTutorAI {
         this.apiKey = localStorage.getItem('openai_api_key') || '';
         this.apiProvider = localStorage.getItem('api_provider') || 'openai';
         this.userProfile = this.loadUserProfile();
-        this.uploadedImageData = null;
+        this.uploadedImages = [];
+        this.abiTasks = [];
+        this.currentAbiSource = null;
+        this.solutionState = this.getDefaultSolutionState();
+        const origin = window.location.origin && window.location.origin.startsWith('http') ? window.location.origin : 'http://localhost:4000';
+        this.backendApiBase = (window.APP_CONFIG && window.APP_CONFIG.BACKEND_URL) || origin.replace(/\/$/, '');
         
         // Initialisiere mit Auth-Check
         this.initWithAuth();
@@ -23,6 +28,9 @@ class MathTutorAI {
             this.currentUser = await this.authService.getCurrentUser();
             if (this.currentUser) {
                 this.userId = this.currentUser.userId;
+                if (this.userProfile) {
+                    this.userProfile.email = this.currentUser.email;
+                }
                 console.log('[MathTutorAI] Initialized with user:', this.userId);
                 
                 // Initialisiere Tracking-System
@@ -68,6 +76,8 @@ class MathTutorAI {
         this.setupEventListeners();
         this.setupTabSwitching();
         this.setupImageUpload();
+        this.setupAbiAdminForm();
+        this.setupAbiGenerator();
         // API-Konfiguration wird jetzt im Profil-Tab verwaltet
     }
 
@@ -166,9 +176,13 @@ class MathTutorAI {
     setupImageUpload() {
         const uploadZone = document.getElementById('upload-zone');
         const imageInput = document.getElementById('image-input');
-        const imagePreview = document.getElementById('image-preview');
-        const previewImg = document.getElementById('preview-img');
-        const removeImageBtn = document.getElementById('remove-image');
+        const previewWrapper = document.getElementById('image-preview');
+        const removeAllBtn = document.getElementById('remove-all-images');
+
+        if (!uploadZone || !imageInput || !previewWrapper || !removeAllBtn) {
+            console.warn('[Image Upload] Elemente nicht gefunden');
+            return;
+        }
 
         // Click to upload
         uploadZone.addEventListener('click', () => {
@@ -188,64 +202,648 @@ class MathTutorAI {
         uploadZone.addEventListener('drop', (e) => {
             e.preventDefault();
             uploadZone.classList.remove('drag-over');
-            const files = e.dataTransfer.files;
-            if (files.length > 0) {
-                this.handleImageUpload(files[0]);
+            if (e.dataTransfer.files.length > 0) {
+                this.handleImageUpload(Array.from(e.dataTransfer.files));
             }
         });
 
         // File input change
         imageInput.addEventListener('change', (e) => {
             if (e.target.files.length > 0) {
-                this.handleImageUpload(e.target.files[0]);
+                this.handleImageUpload(Array.from(e.target.files));
             }
         });
 
-        // Remove image
-        removeImageBtn.addEventListener('click', () => {
-            this.removeImage();
+        // Remove all images
+        removeAllBtn.addEventListener('click', () => {
+            this.clearAllImages();
         });
     }
 
-    handleImageUpload(file) {
-        if (!file.type.startsWith('image/')) {
-            alert('Bitte wähle eine gültige Bilddatei aus.');
+    handleImageUpload(files) {
+        const descriptionArea = document.getElementById('image-description-area');
+        const imageInput = document.getElementById('image-input');
+        const uploadZone = document.getElementById('upload-zone');
+
+        const fileArray = Array.isArray(files) ? files : [files];
+        const validFiles = fileArray.filter((file) => file.type.startsWith('image/'));
+        
+        if (validFiles.length === 0) {
+            this.showNotification('Bitte wähle gültige Bilddateien aus.', 'warning');
             return;
         }
 
+        const invalidCount = fileArray.length - validFiles.length;
+        if (invalidCount > 0) {
+            this.showNotification(`${invalidCount} Datei(en) wurden übersprungen, da sie keine Bilder sind.`, 'warning');
+        }
+
+        validFiles.forEach((file) => {
         const reader = new FileReader();
-        reader.onload = (e) => {
-            const previewImg = document.getElementById('preview-img');
-            const imagePreview = document.getElementById('image-preview');
+            reader.onload = (event) => {
+                this.uploadedImages.push({
+                    name: file.name,
+                    type: file.type,
+                    dataUrl: event.target.result
+                });
+                this.renderImagePreviews();
+            };
+            reader.readAsDataURL(file);
+        });
+
+        if (descriptionArea) {
+            descriptionArea.style.display = 'block';
+        }
+        if (imageInput) {
+            imageInput.value = '';
+        }
+    }
+
+    renderImagePreviews() {
+        const previewWrapper = document.getElementById('image-preview');
+        const previewList = document.getElementById('image-preview-list');
             const uploadZone = document.getElementById('upload-zone');
             const descriptionArea = document.getElementById('image-description-area');
 
-            // Speichere die Bilddaten für die Analyse
-            this.uploadedImageData = e.target.result;
-            
-            previewImg.src = e.target.result;
-            imagePreview.style.display = 'block';
-            uploadZone.style.display = 'none';
+        if (!previewWrapper || !previewList || !uploadZone || !descriptionArea) {
+            return;
+        }
+
+        previewList.innerHTML = '';
+
+        const uploadHint = uploadZone.querySelector('.upload-hint');
+        if (uploadHint) {
+            uploadHint.textContent = this.uploadedImages.length > 0
+                ? 'Weitere Bilder hinzufügen oder hierher ziehen'
+                : 'Klicke hier oder ziehe ein Bild hierher';
+        }
+
+        if (this.uploadedImages.length === 0) {
+            previewWrapper.style.display = 'none';
+            descriptionArea.style.display = 'none';
+            uploadZone.style.display = 'block';
+            return;
+        }
+
+        this.uploadedImages.forEach((image, index) => {
+            const item = document.createElement('div');
+            item.className = 'preview-item';
+
+            const img = document.createElement('img');
+            img.src = image.dataUrl;
+            img.alt = image.name || `Bild ${index + 1}`;
+
+            const caption = document.createElement('p');
+            caption.className = 'preview-name';
+            caption.textContent = image.name || `Bild ${index + 1}`;
+
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'preview-remove-btn';
+            removeBtn.type = 'button';
+            removeBtn.innerHTML = '<i class="fas fa-times"></i>';
+            removeBtn.addEventListener('click', () => this.removeImageByIndex(index));
+
+            item.appendChild(img);
+            item.appendChild(removeBtn);
+            item.appendChild(caption);
+            previewList.appendChild(item);
+        });
+
+        previewWrapper.style.display = 'block';
             descriptionArea.style.display = 'block';
-        };
-        reader.readAsDataURL(file);
+        uploadZone.style.display = 'block';
     }
 
-    removeImage() {
-        const imagePreview = document.getElementById('image-preview');
-        const uploadZone = document.getElementById('upload-zone');
-        const imageInput = document.getElementById('image-input');
-        const descriptionArea = document.getElementById('image-description-area');
-        const descriptionInput = document.getElementById('image-description');
+    removeImageByIndex(index) {
+        if (index < 0 || index >= this.uploadedImages.length) {
+            return;
+        }
+        this.uploadedImages.splice(index, 1);
+        this.renderImagePreviews();
+    }
 
-        imagePreview.style.display = 'none';
-        uploadZone.style.display = 'block';
-        descriptionArea.style.display = 'none';
+    clearAllImages() {
+        this.uploadedImages = [];
+        this.renderImagePreviews();
+        const imageInput = document.getElementById('image-input');
+        const descriptionInput = document.getElementById('image-description');
+        if (imageInput) {
         imageInput.value = '';
+        }
+        if (descriptionInput) {
         descriptionInput.value = '';
-        
-        // Lösche die gespeicherten Bilddaten
-        this.uploadedImageData = null;
+        }
+    }
+
+    getDefaultSolutionState() {
+        return {
+            lastUserSolution: '',
+            lastCanvasImages: [],
+            lastCheckResponse: '',
+            lastWasCorrect: null,
+            hilfestellungEligible: false,
+            hilfestellungProvided: false,
+            correctedProvided: false,
+            canRequestOptimal: false,
+            optimalDelivered: false,
+            hilfestellungContent: '',
+            correctedContent: '',
+            optimalContent: ''
+        };
+    }
+
+    resetSolutionStateForNewTask() {
+        this.solutionState = this.getDefaultSolutionState();
+        this.updateSolutionActionButtons();
+    }
+
+    getSolutionActionNote() {
+        if (!this.solutionState.lastUserSolution) {
+            return 'Reiche eine Lösung ein, um Hilfestellungen freizuschalten.';
+        }
+        if (this.solutionState.lastWasCorrect === true) {
+            return 'Deine Lösung ist korrekt! Optional kannst du dir einen optimalen Lösungsweg anzeigen lassen.';
+        }
+        if (this.solutionState.correctedProvided) {
+            return 'Die korrigierte Version liegt vor. Schau dir jetzt den optimalen Lösungsweg an.';
+        }
+        if (this.solutionState.hilfestellungProvided) {
+            return 'Korrigiere deine Lösung oder lass dir bei Bedarf eine korrigierte Fassung anzeigen.';
+        }
+        if (this.solutionState.hilfestellungEligible) {
+            return 'Hilfestellung verfügbar: Lass dir deinen Lösungsweg mit Markierungen anzeigen.';
+        }
+        return 'Reiche erneut eine Lösung ein, damit wir gezielt helfen können.';
+    }
+
+    updateSolutionActionButtons() {
+        const hilfestellungBtn = document.getElementById('request-hilfestellung');
+        const correctedBtn = document.getElementById('request-corrected');
+        const optimalBtn = document.getElementById('request-optimal');
+        const noteElement = document.getElementById('solution-action-note');
+
+        if (hilfestellungBtn) {
+            const eligible = this.solutionState.hilfestellungEligible
+                && !!this.solutionState.lastUserSolution
+                && !this.solutionState.correctedProvided
+                && this.solutionState.lastWasCorrect === false;
+            hilfestellungBtn.disabled = !eligible;
+        }
+
+        if (correctedBtn) {
+            const canCorrect = this.solutionState.hilfestellungProvided
+                && this.solutionState.lastWasCorrect === false
+                && !this.solutionState.correctedProvided
+                && !!this.solutionState.lastUserSolution;
+            correctedBtn.disabled = !canCorrect;
+        }
+
+        if (optimalBtn) {
+            const canOptimal = this.solutionState.canRequestOptimal && !this.solutionState.optimalDelivered;
+            optimalBtn.disabled = !canOptimal;
+        }
+
+        if (noteElement) {
+            noteElement.textContent = this.getSolutionActionNote();
+        }
+    }
+
+    setupAbiAdminForm() {
+        const form = document.getElementById('abi-upload-form');
+        const fileInput = document.getElementById('abi-pdf-input');
+        if (!form || !fileInput) {
+            return;
+        }
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            await this.handleAbiUploadSubmit();
+        });
+
+        this.loadAbiTaskList();
+    }
+
+    async handleAbiUploadSubmit() {
+        const fileInput = document.getElementById('abi-pdf-input');
+        const titleInput = document.getElementById('abi-title-input');
+        const yearInput = document.getElementById('abi-year-input');
+        const subjectInput = document.getElementById('abi-subject-input');
+        const tagsInput = document.getElementById('abi-tags-input');
+
+        if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+            this.showNotification('Bitte wähle eine PDF-Datei aus.', 'warning');
+            return;
+        }
+
+        const pdfFile = fileInput.files[0];
+        if (pdfFile.type !== 'application/pdf') {
+            this.showNotification('Nur PDF-Dateien sind erlaubt.', 'warning');
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('pdf', pdfFile);
+        if (titleInput && titleInput.value.trim()) {
+            formData.append('title', titleInput.value.trim());
+        }
+        if (yearInput && yearInput.value) {
+            formData.append('year', yearInput.value);
+        }
+        if (subjectInput && subjectInput.value.trim()) {
+            formData.append('subject', subjectInput.value.trim());
+        }
+        if (tagsInput && tagsInput.value.trim()) {
+            formData.append('tags', tagsInput.value.trim());
+        }
+
+        this.showAbiUploadStatus('Aufgabe wird hochgeladen...', 'info');
+
+        try {
+            const response = await fetch(this.getBackendUrl('/api/abi-tasks'), {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) {
+                let errorMessage = `Upload fehlgeschlagen (${response.status})`;
+                try {
+                    const errorData = await response.json();
+                    if (errorData.error) {
+                        errorMessage = errorData.error;
+                    }
+                } catch {
+                    // ignore JSON parse errors
+                }
+                throw new Error(errorMessage);
+            }
+
+            await response.json();
+            this.showNotification('Abitur-Aufgabe erfolgreich gespeichert!', 'success');
+            this.showAbiUploadStatus('Aufgabe wurde gespeichert.', 'success');
+
+            const form = document.getElementById('abi-upload-form');
+            if (form) {
+                form.reset();
+            }
+            fileInput.value = '';
+
+            await this.loadAbiTaskList(true);
+        } catch (error) {
+            console.error('[ABI Upload] Fehler beim Hochladen:', error);
+            this.showAbiUploadStatus(error.message || 'Upload fehlgeschlagen.', 'error');
+            this.showNotification(error.message || 'Upload fehlgeschlagen.', 'error');
+        }
+    }
+
+    showAbiUploadStatus(message, type = 'info') {
+        const statusElement = document.getElementById('abi-upload-status');
+        if (!statusElement) {
+            return;
+        }
+        statusElement.textContent = message;
+        if (type === 'success') {
+            statusElement.style.color = 'var(--success-color)';
+        } else if (type === 'error') {
+            statusElement.style.color = 'var(--error-color)';
+        } else {
+            statusElement.style.color = 'var(--text-secondary)';
+        }
+    }
+
+    setupAbiGenerator() {
+        const generateBtn = document.getElementById('abi-generate-btn');
+        if (!generateBtn) {
+            return;
+        }
+
+        generateBtn.addEventListener('click', () => {
+            this.generateAbiTask();
+        });
+    }
+
+    async generateAbiTask() {
+        if (!this.apiKey) {
+            this.showNotification('Bitte konfiguriere zuerst deinen API-Schlüssel im Profil-Tab.', 'warning');
+            document.querySelector('[data-tab="user-profile"]').click();
+            return;
+        }
+
+        const statusElement = document.getElementById('abi-generator-status');
+        if (statusElement) {
+            statusElement.textContent = 'Hole zufällige Abitur-Aufgabe...';
+            statusElement.style.color = 'var(--text-secondary)';
+        }
+
+        this.showLoading(true);
+
+        try {
+            const response = await fetch(this.getBackendUrl('/api/abi-tasks/random?includePdfText=true'));
+            if (!response.ok) {
+                if (response.status === 404) {
+                    throw new Error('Es sind noch keine Abitur-Aufgaben im Pool.');
+                }
+                throw new Error(`Fehler beim Laden der Abitur-Aufgabe (${response.status}).`);
+            }
+
+            const abiTask = await response.json();
+            this.currentAbiSource = abiTask;
+
+            if (statusElement) {
+                statusElement.textContent = 'Generiere neue Variante...';
+                statusElement.style.color = 'var(--text-secondary)';
+            }
+
+            const prompt = this.buildAbiPrompt(abiTask);
+            const result = await this.callAIAPI(prompt, 'abi-generate', null, 'abitur');
+
+            this.displayResults(result, true);
+            this.currentTaskContext = {
+                topic: 'abitur',
+                difficulty: 'abitur',
+                taskType: 'exam',
+                origin: 'abi',
+                hintRewriteDone: false,
+                hintsRequested: 0
+            };
+
+            if (statusElement) {
+                statusElement.textContent = 'Neue Abitur-Aufgabe wurde erstellt.';
+                statusElement.style.color = 'var(--success-color)';
+            }
+        } catch (error) {
+            console.error('[ABI Generator] Fehler:', error);
+            if (statusElement) {
+                statusElement.textContent = error.message || 'Fehler bei der Generierung.';
+                statusElement.style.color = 'var(--error-color)';
+            }
+            this.showNotification(error.message || 'Fehler bei der Generierung.', 'error');
+        } finally {
+            this.showLoading(false);
+        }
+    }
+
+    buildAbiPrompt(task) {
+        const variationInstruction = this.getAbiVariationInstruction();
+        const metadataParts = [];
+        if (task.year) metadataParts.push(`Jahrgang: ${task.year}`);
+        if (task.subject) metadataParts.push(`Schwerpunkt: ${task.subject}`);
+        if (task.tags && task.tags.length > 0) metadataParts.push(`Tags: ${task.tags.join(', ')}`);
+
+        const metadataSection = metadataParts.length > 0
+            ? `Metadaten: ${metadataParts.join(' | ')}`
+            : 'Metadaten: Keine zusätzlichen Angaben';
+
+        const extractedText = task.pdfText
+            ? this.truncateText(task.pdfText.trim(), 7000)
+            : 'Hinweis: Für diese Aufgabe konnte kein Text automatisch extrahiert werden. Bitte erstelle dennoch eine passende Variation basierend auf den bekannten Metadaten.';
+
+        const weakTopics = this.userProfile?.weakTopics || [];
+        const instructions = [
+            'Bewahre die mathematische Kernidee und den Schwierigkeitsgrad.',
+            'Passe Kontextdetails an (z.B. beteiligte Personen, reale Gegenstände, Szenario, erzählerische Elemente).',
+            'Du darfst Zahlenwerte geringfügig verändern (maximal ±15 %), sofern die Aufgabe konsistent bleibt.',
+            'Formuliere die neue Aufgabe klar in deutscher Sprache und nutze LaTeX für mathematische Ausdrücke wie üblich.',
+            'Gib ausschließlich die neue Aufgabenstellung aus – keine Lösungen, keine Hinweise, keine Erklärungen.',
+            'Struktur und Umfang sollen dem Original entsprechen.',
+            variationInstruction
+        ];
+
+        if (weakTopics.length > 0) {
+            instructions.push(`Berücksichtige, dass der Schüler zusätzlich an folgenden Themen arbeiten möchte: ${weakTopics.join(', ')}.`);
+        }
+
+        const instructionBlock = instructions
+            .map((instruction, index) => `${index + 1}. ${instruction}`)
+            .join('\n');
+
+        return `
+Du erhältst eine originale Abitur-Aufgabe aus Sachsen. Erstelle darauf basierend eine leicht variierte Abitur-Aufgabe, die weiterhin den offiziellen Anforderungen entspricht.
+
+WICHTIG:
+${instructionBlock}
+
+${metadataSection}
+
+ORIGINALTEXT DER AUFGABE (nur zur Analyse, NICHT unverändert übernehmen):
+---
+${extractedText}
+---
+`;
+    }
+
+    buildEvaluationPrompt({ userSolution, drawingInfo, hasDrawings }) {
+        return `
+Aufgabe:
+${this.currentTask}
+
+Lösung des Schülers:
+${userSolution || '(Keine schriftliche Lösung, nur Zeichnung)'}
+${drawingInfo}
+
+ANWEISUNGEN:
+1. Prüfe ausschließlich, ob der Lösungsweg in allen Schritten fachlich korrekt und vollständig ist.
+2. Gib KEINE Erklärungen, Korrekturen, Tipps oder Zusatztexte aus.
+3. Wenn der Lösungsweg vollständig korrekt ist, antworte exakt mit zwei Zeilen:
+   GELÖST
+   __SOLUTION_STATUS:OK__
+4. Wenn der Lösungsweg nicht vollständig korrekt ist oder du unsicher bist, antworte ausschließlich mit:
+   NICHT GELÖST
+5. Verwende keine weiteren Wörter, Satzzeichen, Emojis oder Formatierungen.
+`;
+    }
+
+    buildHilfestellungPrompt() {
+        const evaluation = this.solutionState.lastCheckResponse || 'Es liegt noch kein detailliertes Feedback vor.';
+        const userSolution = this.solutionState.lastUserSolution || '(Keine schriftliche Lösung eingereicht.)';
+        return `
+Aufgabe:
+${this.currentTask}
+
+Lösung des Schülers (Originaltext):
+${userSolution}
+
+ANWEISUNGEN:
+1. Gib ausschließlich den Lösungsweg des Schülers erneut aus – gleiche Reihenfolge, identische Zeilenumbrüche.
+2. Erzeuge KEINEN zusätzlichen Text, keine Einleitung, keine Erklärungen, keine Tipps.
+3. Markiere nur die tatsächlich fehlerhaften Passagen. Korrekte Teile bleiben unverändert (keine \color-Anweisung).
+4. Nutze für Markierungen den LaTeX-Befehl \color{FARBE}{…}. Verwende exakt folgende Farben und umfasse stets die gesamte betroffene Passage:
+   - Grober Fehler (falsches Rechnen, Regelverstoß): \color{red}{…}
+   - Folgefehler (aus einem vorherigen Fehler entstanden): \color{yellow}{…}
+   - Grober Fehler mit Folgefehler kombiniert: \color{orange}{…}
+   - Form- oder Notationsfehler (z.B. falsches oder fehlendes Symbol): \color{blue}{…}
+   - Falsches Einsetzen oder ausgelassener notwendiger Zwischenschritt: \color{purple}{…}
+5. Bei Umformungen von Gleichungen gib jeden Zwischenschritt auf einer Zeile aus und verbinde sie mit einem = (z.B. \color{red}{falscher\_Term} = korrekter\_Term).
+6. Achte darauf, dass jede \color-Anweisung genau zwei geschweifte Klammern besitzt (keine leeren { }, keine offenen Klammern). Entferne überflüssige Backslashes.
+7. Am Ende darf ausschließlich der neu formatierte Lösungsweg stehen – keine Schlussbemerkung oder Hinweis.`;
+    }
+
+    buildCorrectedSolutionPrompt() {
+        const evaluation = this.solutionState.lastCheckResponse || 'Es liegt noch kein detailliertes Feedback vor.';
+        const userSolution = this.solutionState.lastUserSolution || '(Keine schriftliche Lösung eingereicht.)';
+        return `
+Aufgabe:
+${this.currentTask}
+
+Bisheriges Feedback der Bewertung:
+${evaluation}
+
+Aktueller Lösungsversuch des Schülers:
+${userSolution}
+
+ANWEISUNGEN:
+1. Verwende ausschließlich den vom Schüler eingeschlagenen Lösungsweg (gleiche Reihenfolge, gleiche Methoden). Füge keine alternativen Verfahren hinzu.
+2. Wenn der Lösungsweg aktuell NICHT vollständig korrekt ist oder du dir unsicher bist:
+   - Teile knapp mit, dass Fehler vorhanden sind und der Schüler die Hilfestellung oder eigene Überarbeitung nutzen soll.
+   - Gib KEINE korrigierte Lösung aus.
+   - Setze KEINEN Status-Token.
+3. Wenn der Lösungsweg vollständig korrigierbar ist:
+   - Erstelle eine korrigierte Fassung in der selben Struktur und Methode.
+   - Kennzeichne jede Änderung mit <span class="correction-highlight">[KORREKTUR] … </span> und erläutere unmittelbar danach kurz, was geändert wurde.
+   - Belasse alle korrekten Teile unverändert.
+   - Beende die Antwort mit einer eigenen Zeile \`__CORRECTION_STATUS:OK__\`.
+4. Verwende überall korrekte LaTeX-Notation.
+`;
+    }
+
+    buildOptimalSolutionPrompt() {
+        const hasCorrectUserSolution = this.solutionState.lastWasCorrect === true && this.solutionState.lastUserSolution;
+        const referenceSolution = this.solutionState.correctedContent
+            || this.solutionState.lastUserSolution
+            || '(Keine schriftliche Lösung eingereicht.)';
+        const context = hasCorrectUserSolution
+            ? 'Der Schüler hat die Aufgabe schließlich korrekt gelöst. Zeige einen effizienteren oder didaktisch klareren Ansatz.'
+            : 'Der Schüler konnte die Aufgabe nicht selbst vollständig lösen. Nutze die korrigierte Fassung als Ausgangspunkt und zeige einen effizienteren Ansatz.';
+
+        return `
+Aufgabe:
+${this.currentTask}
+
+Kontext:
+${context}
+
+Referenzlösung:
+${referenceSolution}
+
+ANWEISUNGEN:
+1. Stelle einen besonders übersichtlichen und effizienten Lösungsweg Schritt für Schritt dar.
+2. Hebe besonders elegante oder zeitsparende Schritte mit <span class="optimal-highlight">[OPTIMIERUNG] … </span> hervor.
+3. Begründe direkt nach jeder Markierung, warum dieser Ansatz gegenüber der Referenzlösung Vorteile bietet.
+4. Schließe mit 2–3 Stichpunkten, was der Schüler aus dem optimierten Ansatz lernen sollte.
+5. Verwende LaTeX für alle mathematischen Ausdrücke.
+Wenn farbige Darstellung nicht möglich ist, behalte die Textlabels in eckigen Klammern bei.
+`;
+    }
+
+    getAbiVariationInstruction() {
+        const variations = [
+            'Verändere die Alltagssituation und die beteiligten Personen, ohne den mathematischen Aufbau zu verändern.',
+            'Passe die erzählte Geschichte an einen anderen Kontext (z.B. Naturwissenschaft, Wirtschaft, Sport) an, behalte jedoch die gleichen mathematischen Fragestellungen bei.',
+            'Ersetze reale Gegenstände in der Aufgabe durch andere Objekte mit ähnlichen Eigenschaften und passe Beschreibungen entsprechend an.',
+            'Ändere die Ausgangswerte minimal (höchstens um ±10 %) und schreibe die Texte so, dass die neuen Werte logisch zur Situation passen.',
+            'Formuliere die Aufgabe so um, dass sie sich an eine andere reale Situation (z.B. Berufsausbildung, Studium, Alltag) richtet, lasse aber die mathematischen Anforderungen identisch.'
+        ];
+        const index = Math.floor(Math.random() * variations.length);
+        return variations[index];
+    }
+
+    truncateText(text, maxLength) {
+        if (!text || text.length <= maxLength) {
+            return text;
+        }
+        return `${text.slice(0, maxLength)}\n[Text gekürzt]`;
+    }
+
+    getLearningStyleInstruction(style) {
+        switch (style) {
+            case 'visual':
+                return 'Nutze bildhafte Sprache, verweise auf Skizzen oder Diagramme und strukturiere die Informationen so, dass visuelle Lernende leicht folgen können.';
+            case 'conceptual':
+                return 'Betone die zugrunde liegenden Konzepte, erläutere Zusammenhänge und fokussiere auf das Warum hinter den mathematischen Schritten.';
+            case 'practical':
+                return 'Stelle einen alltagsnahen oder praxisbezogenen Kontext her und zeige, welche reale Bedeutung die Aufgabe hat.';
+            case 'step-by-step':
+            default:
+                return 'Teile die Aufgabenstellung in klar erkennbare Abschnitte und verwende eindeutige Formulierungen, die eine schrittweise Bearbeitung nahelegen.';
+        }
+    }
+
+    async loadAbiTaskList(showNotificationOnEmpty = false) {
+        const listElement = document.getElementById('abi-task-list');
+        if (!listElement) {
+            return;
+        }
+
+        listElement.innerHTML = '<li>Lade Aufgaben...</li>';
+
+        try {
+            const response = await fetch(this.getBackendUrl('/api/abi-tasks'));
+            if (!response.ok) {
+                throw new Error(`Konnte Aufgaben nicht laden (${response.status})`);
+            }
+
+            const tasks = await response.json();
+            this.abiTasks = Array.isArray(tasks) ? tasks : [];
+            this.renderAbiTaskList();
+
+            if (showNotificationOnEmpty && this.abiTasks.length === 0) {
+                this.showNotification('Aktuell sind keine Abitur-Aufgaben im Pool.', 'info');
+            }
+        } catch (error) {
+            console.error('[ABI Upload] Fehler beim Laden der Aufgaben:', error);
+            listElement.innerHTML = '<li>Fehler beim Laden der Aufgaben.</li>';
+            this.showNotification(error.message || 'Fehler beim Laden der Aufgaben.', 'error');
+        }
+    }
+
+    renderAbiTaskList() {
+        const listElement = document.getElementById('abi-task-list');
+        if (!listElement) {
+            return;
+        }
+
+        listElement.innerHTML = '';
+
+        if (!this.abiTasks || this.abiTasks.length === 0) {
+            const emptyItem = document.createElement('li');
+            emptyItem.textContent = 'Noch keine Abitur-Aufgaben vorhanden.';
+            listElement.appendChild(emptyItem);
+            return;
+        }
+
+        this.abiTasks.forEach((task) => {
+            const item = document.createElement('li');
+
+            const title = document.createElement('div');
+            title.textContent = task.title || task.original_filename || 'Ohne Titel';
+            title.style.fontWeight = '600';
+            title.style.color = 'var(--text-primary)';
+
+            const meta = document.createElement('div');
+            meta.style.fontSize = 'var(--font-size-sm)';
+            meta.style.color = 'var(--text-secondary)';
+            const metaParts = [];
+            if (task.year) metaParts.push(`Jahr ${task.year}`);
+            if (task.subject) metaParts.push(task.subject);
+            if (task.tags && task.tags.length > 0) metaParts.push(`#${task.tags.join(' #')}`);
+            meta.textContent = metaParts.join(' • ');
+
+            const link = document.createElement('a');
+            link.href = task.pdfUrl || '#';
+            link.textContent = 'PDF öffnen';
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            link.className = 'task-link';
+
+            item.appendChild(title);
+            if (metaParts.length > 0) {
+                item.appendChild(meta);
+            }
+            if (task.pdfUrl) {
+                item.appendChild(link);
+            }
+
+            listElement.appendChild(item);
+        });
     }
 
     checkApiConfiguration() {
@@ -312,7 +910,7 @@ class MathTutorAI {
     async analyzeImageInput() {
         const descriptionInput = document.getElementById('image-description').value.trim();
         
-        if (!this.uploadedImageData) {
+        if (!this.uploadedImages || this.uploadedImages.length === 0) {
             this.showNotification('Bitte lade zuerst ein Bild hoch.', 'warning');
             return;
         }
@@ -328,11 +926,11 @@ class MathTutorAI {
         
         try {
             const prompt = descriptionInput || 'Analysiere bitte diese Mathematik-Aufgabe und erkläre sie Schritt für Schritt.';
-            const response = await this.callAIAPI(prompt, 'analyze', this.uploadedImageData);
+            const response = await this.callAIAPI(prompt, 'analyze', this.uploadedImages);
             this.displayResults(response);
             
             // Lösche das Bild und die Beschreibung nach erfolgreicher Analyse
-            this.removeImage();
+            this.clearAllImages();
         } catch (error) {
             console.error('Fehler bei der KI-Analyse:', error);
             this.showNotification('Fehler bei der KI-Analyse. Bitte versuche es erneut.', 'error');
@@ -410,8 +1008,9 @@ class MathTutorAI {
     }
 
     async callAIAPI(prompt, type, imageData = null, topic = null, intervention = null) {
-        const baseSystemPrompt = type === 'analyze' 
-            ? `Du bist ein erfahrener Mathematik-Tutor mit Spezialisierung auf deutsche Schulmathematik. 
+        let baseSystemPrompt;
+        if (type === 'analyze') {
+            baseSystemPrompt = `Du bist ein erfahrener Mathematik-Tutor mit Spezialisierung auf deutsche Schulmathematik. 
 
 KRITISCH WICHTIG - LaTeX-Formatierung:
 1. Verwende für INLINE mathematische Ausdrücke: $...$
@@ -434,8 +1033,128 @@ WICHTIGE RICHTLINIEN:
 3. Erkläre jeden Schritt verständlich für Schüler
 4. Gib am Ende eine Zusammenfassung der wichtigsten Punkte
 
-Analysiere die gegebene Mathematik-Aufgabe oder -Frage und gib eine hilfreiche Antwort mit detaillierter Schritt-für-Schritt-Lösung.`
-            : `Du bist ein erfahrener Mathematik-Lehrer mit Spezialisierung auf deutsche Schulmathematik.
+Analysiere die gegebene Mathematik-Aufgabe oder -Frage und gib eine hilfreiche Antwort mit detaillierter Schritt-für-Schritt-Lösung.`;
+        } else if (type === 'abi-generate') {
+            baseSystemPrompt = `Du bist ein erfahrener Mathematik-Lehrer für das sächsische Abitur.
+
+KRITISCH WICHTIG - LaTeX-Formatierung:
+1. Verwende für INLINE mathematische Ausdrücke: $...$
+   Beispiel: Berechne die Ableitung von $f(x) = x^3 + 2x$.
+2. Verwende für DISPLAY mathematische Ausdrücke: $$...$$
+   Beispiel: $$\\int_{0}^{\\pi} \\sin(x) \\, dx$$
+3. NIEMALS einzelne Symbole wrappen - nur komplette Formeln!
+4. Korrekte LaTeX-Befehle:
+   - Integrale: $\\int_{a}^{b} f(x) \\, dx$
+   - Brüche: $\\frac{a}{b}$
+   - Wurzeln: $\\sqrt{x}$
+   - Potenzen: $x^{2}$
+
+WICHTIGE RICHTLINIEN:
+1. Nutze die Original-Aufgabe als Grundlage und erstelle eine konsistente Variante im Abitur-Stil.
+2. Bewahre den mathematischen Kern und die Schwierigkeit, variiere jedoch Kontextdetails und Formulierungen.
+3. Falls Zahlenwerte angepasst werden, behalte die logische Konsistenz der Aufgabe bei.
+4. Verwende eine klare Struktur mit sauberer deutscher Sprache.
+5. Gib ausschließlich die neue Aufgabenstellung aus – KEINE Lösungen, KEINE Hinweise, KEINE Erklärungen.
+6. Der Umfang muss dem Original entsprechen (ähnliche Anzahl an Teilaufgaben, Punkte, Anforderungen).`;
+        } else if (type === 'hint') {
+            baseSystemPrompt = `Du bist ein unterstützender Mathematik-Tutor.
+
+KRITISCH WICHTIG - LaTeX-Formatierung:
+1. Verwende für INLINE mathematische Ausdrücke: $...$
+   Beispiel: Die Funktion $f(x) = x^2$ ist eine Parabel.
+2. Verwende für DISPLAY mathematische Ausdrücke: $$...$$
+   Beispiel: $$\\int_{0}^{1} x^2 \\, dx = \\frac{1}{3}$$
+3. NIEMALS einzelne Symbole wrappen - nur komplette Formeln!
+4. Korrekte LaTeX-Befehle:
+   - Integrale: $\\int_{a}^{b} f(x) \\, dx$
+   - Brüche: $\\frac{a}{b}$
+   - Wurzeln: $\\sqrt{x}$ oder $\\sqrt[n]{x}$
+   - Potenzen: $x^{2}$ oder $x^{n+1}$
+   - Griechische Buchstaben: $\\alpha, \\beta, \\pi$
+   - Summen: $\\sum_{i=1}^{n} i$
+   - Limites: $\\lim_{x \\to \\infty} f(x)$
+
+WICHTIGE RICHTLINIEN:
+1. Gib höchstens einen präzisen Hinweis, der dem Schüler hilft, den nächsten Schritt zu sehen.
+2. Verrate niemals die vollständige Lösung und nenne auch nicht das Endergebnis.
+3. Verwende eine ermutigende, klare Sprache.
+4. Falls hilfreich, erinnere an relevante Formeln oder Konzepte, ohne sie vollständig auszurechnen.
+5. Passe Tonfall und Detailtiefe an das Lernniveau an.`;
+        } else if (type === 'solution') {
+            baseSystemPrompt = `Du bist ein erfahrener Mathematik-Tutor mit Spezialisierung auf deutsche Schulmathematik.
+
+KRITISCH WICHTIG - LaTeX-Formatierung:
+1. Verwende für INLINE mathematische Ausdrücke: $...$
+   Beispiel: Die Funktion $f(x) = x^2$ ist eine Parabel.
+2. Verwende für DISPLAY mathematische Ausdrücke: $$...$$
+   Beispiel: $$\\int_{0}^{1} x^2 \\, dx = \\frac{1}{3}$$
+3. NIEMALS einzelne Symbole wrappen - nur komplette Formeln!
+4. Korrekte LaTeX-Befehle:
+   - Integrale: $\\int_{a}^{b} f(x) \\, dx$
+   - Brüche: $\\frac{a}{b}$
+   - Wurzeln: $\\sqrt{x}$ oder $\\sqrt[n]{x}$
+   - Potenzen: $x^{2}$ oder $x^{n+1}$
+   - Griechische Buchstaben: $\\alpha, \\beta, \\pi$
+   - Summen: $\\sum_{i=1}^{n} i$
+   - Limites: $\\lim_{x \\to \\infty} f(x)$
+
+WICHTIGE RICHTLINIEN:
+1. Erstelle eine vollständige Lösung mit logisch aufgebauten Teilschritten.
+2. Erkläre jeden Schritt so, dass ein Schüler den Gedankengang nachvollziehen kann.
+3. Verwende deutsche mathematische Terminologie.
+4. Fasse die Kernaussagen am Ende knapp zusammen.`;
+        } else if (type === 'hilfestellung') {
+            baseSystemPrompt = `Du bist ein unterstützender Mathematik-Coach. Du gibst den Lösungsweg des Schülers wieder und markierst Fehler farblich.
+
+KRITISCH WICHTIG - LaTeX-Formatierung:
+1. Verwende für INLINE mathematische Ausdrücke: $...$
+2. Verwende für DISPLAY mathematische Ausdrücke: $$...$$
+3. Nur vollständige Ausdrücke markieren – keine einzelnen Zeichen.
+
+MARKIERUNGEN:
+- Grobe Fehler: <span class="error-grob">[GROBER FEHLER] … </span>
+- Folgefehler: <span class="error-folge">[FOLGEFEHLER] … </span>
+- Kombination aus grobem Fehler und Folgefehler: <span class="error-grobfolge">[GROBER FEHLER + FOLGEFEHLER] … </span>
+- Formfehler/Falsches Aufschreiben: <span class="error-notation">[FORMFEHLER] … </span>
+Wenn eine farbliche Darstellung nicht möglich ist, müssen die Textlabels in eckigen Klammern unbedingt erhalten bleiben.
+
+WICHTIGE RICHTLINIEN:
+1. Gib den Lösungsweg Schritt für Schritt wieder.
+2. Erkläre nach jeder markierten Passage kurz, weshalb sie falsch ist und wie sie korrigiert wird.
+3. Schließe mit konkreten Tipps, wie ähnliche Fehler vermieden werden können.`;
+        } else if (type === 'corrected') {
+            baseSystemPrompt = `Du bist ein Mathematik-Tutor und erstellst eine korrigierte Version des Schülerlösungswegs.
+
+KRITISCH WICHTIG - LaTeX-Formatierung:
+1. Verwende für INLINE mathematische Ausdrücke: $...$
+2. Verwende für DISPLAY mathematische Ausdrücke: $$...$$
+
+MARKIERUNGEN:
+- <span class="correction-highlight">[KORREKTUR] … </span> für jede geänderte oder ergänzte Passage.
+- Erkläre unmittelbar nach jeder markierten Stelle, warum die Änderung nötig ist.
+Wenn farbliche Darstellung nicht möglich ist, bleiben die Textlabels in eckigen Klammern bestehen.
+
+WICHTIGE RICHTLINIEN:
+1. Belasse korrekte Teile unverändert.
+2. Bewahre die ursprüngliche Struktur des Lösungswegs.
+3. Schließe mit einer kurzen Liste der wichtigsten Korrekturen.`;
+        } else if (type === 'optimal') {
+            baseSystemPrompt = `Du bist ein Mathematik-Coach, der effiziente Lösungswege präsentiert.
+
+KRITISCH WICHTIG - LaTeX-Formatierung:
+1. Verwende für INLINE mathematische Ausdrücke: $...$
+2. Verwende für DISPLAY mathematische Ausdrücke: $$...$$
+
+MARKIERUNGEN:
+- <span class="optimal-highlight">[OPTIMIERUNG] … </span> für Schritte, die besonders elegant oder zeitsparend sind.
+Wenn farbliche Darstellung nicht möglich ist, behalte die Textlabels in eckigen Klammern bei.
+
+WICHTIGE RICHTLINIEN:
+1. Stelle einen klaren, strukturierten Lösungsweg vor.
+2. Begründe jede markierte Optimierung.
+3. Fasse zum Schluss die Vorteile des Ansatzes zusammen.`;
+        } else {
+            baseSystemPrompt = `Du bist ein erfahrener Mathematik-Lehrer mit Spezialisierung auf deutsche Schulmathematik.
 
 KRITISCH WICHTIG - LaTeX-Formatierung:
 1. Verwende für INLINE mathematische Ausdrücke: $...$
@@ -459,57 +1178,79 @@ WICHTIGE RICHTLINIEN für Aufgaben-Generierung:
 WICHTIG: Gib nur die Aufgabenstellung aus, keine Lösung, keine Lösungshinweise, keine Erklärungen. Der Schüler soll die Aufgabe selbst lösen.
 
 Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern.`;
+        }
         
-        const systemPrompt = await this.getPersonalizedPrompt(baseSystemPrompt, type, topic, intervention);
+        const shouldPersonalize = type !== 'abi-generate';
+        const systemPrompt = shouldPersonalize
+            ? await this.getPersonalizedPrompt(baseSystemPrompt, type, topic, intervention)
+            : baseSystemPrompt;
 
         // Bestimme das richtige Modell basierend auf Bild-Upload
         let model;
         if (this.apiProvider === 'openai') {
-            model = imageData ? 'gpt-4o' : 'gpt-3.5-turbo';
+            model = 'gpt-5.1';
         } else {
             model = 'claude-3-5-sonnet-20241022';
         }
 
+        const imagePayloads = Array.isArray(imageData) ? imageData : (imageData ? [imageData] : []);
+        const normalizedImages = imagePayloads
+            .map((item) => {
+                if (!item) return null;
+                if (typeof item === 'string') {
+                    return { dataUrl: item };
+                }
+                if (typeof item === 'object' && item.dataUrl) {
+                    return item;
+                }
+                return null;
+            })
+            .filter(Boolean);
+
+        const hasImages = normalizedImages.length > 0;
+
         // Erstelle die Nachrichten mit Bild-Unterstützung
         let userMessage;
-        if (imageData && this.apiProvider === 'openai') {
-            // OpenAI Vision Format
-            userMessage = {
-                role: 'user',
-                content: [
+        if (hasImages && this.apiProvider === 'openai') {
+            // OpenAI Vision Format unterstützt mehrere Bilder
+            const content = [
                     {
                         type: 'text',
                         text: prompt
                     },
-                    {
+                ...normalizedImages.map((image) => ({
                         type: 'image_url',
                         image_url: {
-                            url: imageData
-                        }
+                        url: image.dataUrl
                     }
-                ]
-            };
-        } else if (imageData && this.apiProvider === 'anthropic') {
-            // Claude Vision Format
-            const base64Data = imageData.split(',')[1];
-            const mimeType = imageData.split(';')[0].split(':')[1];
-            
+                }))
+            ];
             userMessage = {
                 role: 'user',
-                content: [
-                    {
+                content
+            };
+        } else if (hasImages && this.apiProvider === 'anthropic') {
+            // Claude Vision Format
+            const content = normalizedImages.map((image) => {
+                const [header, base64Data] = image.dataUrl.split(',');
+                const mimeMatch = header.match(/^data:(.*?);base64$/);
+                return {
                         type: 'image',
                         source: {
                             type: 'base64',
-                            media_type: mimeType,
+                        media_type: mimeMatch ? mimeMatch[1] : 'image/png',
                             data: base64Data
                         }
-                    },
-                    {
+                };
+            });
+            content.push({
                         type: 'text',
                         text: prompt
-                    }
-                ]
+            });
+
+            userMessage = {
+                role: 'user',
+                content
             };
         } else {
             // Kein Bild - Standard-Format
@@ -528,9 +1269,14 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
                 },
                 userMessage
             ],
-            max_tokens: 2000,
             temperature: 0.7
         };
+
+        if (this.apiProvider === 'openai') {
+            requestBody.max_completion_tokens = 2000;
+        } else {
+            requestBody.max_tokens = 2000;
+        }
 
         // Anthropic-spezifische Parameter
         if (this.apiProvider === 'anthropic') {
@@ -688,11 +1434,24 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
                             <i class="fas fa-lightbulb"></i>
                             Tipp anfordern
                         </button>
+                        <button class="btn btn-secondary" id="request-hilfestellung" disabled>
+                            <i class="fas fa-life-ring"></i>
+                            Hilfestellung
+                        </button>
+                        <button class="btn btn-secondary" id="request-corrected" disabled>
+                            <i class="fas fa-tools"></i>
+                            Korrigierte Fassung
+                        </button>
                         <button class="btn btn-secondary" id="show-solution">
                             <i class="fas fa-eye"></i>
                             Musterlösung anzeigen
                         </button>
+                        <button class="btn btn-secondary" id="request-optimal" disabled>
+                            <i class="fas fa-rocket"></i>
+                            Optimaler Lösungsweg
+                        </button>
                     </div>
+                    <div class="interaction-note" id="solution-action-note"></div>
                 </div>
                 <div id="feedback-area" style="display: none;">
                     <div class="ai-response feedback-response">
@@ -728,8 +1487,10 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
         
         // Event Listener für Interaktions-Buttons hinzufügen
         if (isTask) {
+            this.resetSolutionStateForNewTask();
             this.setupInteractionListeners();
             this.initializeCanvas();
+            this.updateSolutionActionButtons();
         }
     }
 
@@ -1128,6 +1889,9 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
         const submitBtn = document.getElementById('submit-solution');
         const hintBtn = document.getElementById('request-hint');
         const solutionBtn = document.getElementById('show-solution');
+        const hilfestellungBtn = document.getElementById('request-hilfestellung');
+        const correctedBtn = document.getElementById('request-corrected');
+        const optimalBtn = document.getElementById('request-optimal');
         const solutionInput = document.getElementById('solution-input');
         
         if (submitBtn) {
@@ -1141,6 +1905,18 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
         if (solutionBtn) {
             solutionBtn.addEventListener('click', () => this.showSolution());
         }
+
+        if (hilfestellungBtn) {
+            hilfestellungBtn.addEventListener('click', () => this.requestHilfestellung());
+        }
+
+        if (correctedBtn) {
+            correctedBtn.addEventListener('click', () => this.requestCorrectedSolution());
+        }
+
+        if (optimalBtn) {
+            optimalBtn.addEventListener('click', () => this.requestOptimalSolution());
+        }
         
         // Strg+Enter zum Absenden der Lösung
         if (solutionInput) {
@@ -1150,6 +1926,8 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
                 }
             });
         }
+
+        this.updateSolutionActionButtons();
     }
 
     async submitSolution() {
@@ -1176,27 +1954,34 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
                 drawingInfo += '\n(Hinweis: Die Skizzen können derzeit nicht direkt analysiert werden, aber du kannst basierend auf der Beschreibung des Schülers Feedback geben.)';
             }
             
-            const prompt = `
-Aufgabe:
-${this.currentTask}
-
-Lösung des Schülers:
-${userSolution || '(Keine schriftliche Lösung, nur Zeichnung)'}
-${drawingInfo}
-
-Bitte analysiere die Lösung des Schülers und gib konstruktives Feedback:
-1. Ist die Lösung korrekt? Wenn ja, gratuliere dem Schüler.
-2. Falls Fehler vorhanden sind, erkläre sie verständlich, ohne die komplette Lösung zu verraten.
-3. Gib Hinweise, wie der Schüler weitermachen kann.
-4. Lobe richtige Ansätze und Teillösungen.
-5. Verwende eine ermutigende und unterstützende Sprache.
-${canvasImages.length > 0 ? '6. Wenn der Schüler Zeichnungen erstellt hat, gib allgemeine Hinweise zu visuellen Ansätzen.' : ''}
-`;
+            const prompt = this.buildEvaluationPrompt({
+                userSolution,
+                drawingInfo,
+                hasDrawings: canvasImages.length > 0
+            });
             
             const response = await this.callAIAPI(prompt, 'analyze', null, this.currentTaskContext?.topic);
             
-            // TODO: Parse response to determine success
-            const success = response.toLowerCase().includes('korrekt') || response.toLowerCase().includes('richtig');
+            const STATUS_TOKEN = '__SOLUTION_STATUS:OK__';
+            const success = response.includes(STATUS_TOKEN);
+            const cleanedResponse = success
+                ? response.replace(STATUS_TOKEN, '').trim()
+                : response.trim();
+
+            Object.assign(this.solutionState, {
+                lastUserSolution: userSolution,
+                lastCanvasImages: canvasImages,
+                lastCheckResponse: cleanedResponse,
+                lastWasCorrect: success,
+                hilfestellungEligible: !success && !!userSolution,
+                hilfestellungProvided: false,
+                correctedProvided: false,
+                canRequestOptimal: success,
+                optimalDelivered: false,
+                hilfestellungContent: '',
+                correctedContent: '',
+                optimalContent: ''
+            });
             
             // Log Performance
             if (this.userId && this.performanceTracker && this.currentTaskContext) {
@@ -1225,7 +2010,8 @@ ${canvasImages.length > 0 ? '6. Wenn der Schüler Zeichnungen erstellt hat, gib 
                 }
             }
             
-            this.displayFeedback(response, canvasImages);
+            this.displayFeedback(cleanedResponse, canvasImages);
+            this.updateSolutionActionButtons();
         } catch (error) {
             console.error('Fehler beim Überprüfen der Lösung:', error);
             this.showNotification('Fehler beim Überprüfen der Lösung: ' + error.message, 'error');
@@ -1250,7 +2036,30 @@ ${canvasImages.length > 0 ? '6. Wenn der Schüler Zeichnungen erstellt hat, gib 
         }
         
         try {
-            const prompt = `
+            const isAbiRewrite = this.currentTaskContext?.origin === 'abi' && !this.currentTaskContext?.hintRewriteDone;
+            if (this.currentTaskContext) {
+                this.currentTaskContext.hintsRequested = (this.currentTaskContext.hintsRequested || 0) + 1;
+            }
+
+            let prompt;
+            if (isAbiRewrite) {
+                const learningStyle = this.userProfile?.learningStyle || 'step-by-step';
+                const learningInstruction = this.getLearningStyleInstruction(learningStyle);
+                prompt = `
+Aufgabe (aktuelle Formulierung):
+${this.currentTask}
+
+Bitte formuliere die Aufgabenstellung so um, dass sie besser zu folgenden Lernpräferenzen passt:
+- Lernstil: ${learningStyle}
+- Anpassungshinweis: ${learningInstruction}
+
+WICHTIG:
+1. Ändere ausschließlich die Formulierung, nicht die mathematischen Anforderungen.
+2. Nutze weiterhin korrekte LaTeX-Syntax für mathematische Elemente.
+3. Gib keine Lösung, keinen Tipp und keine Hinweise auf den Lösungsweg.
+4. Behalte den Abitur-Kontext bei, aber wähle Formulierungen, die dem Lernstil entgegenkommen.`;
+            } else {
+                prompt = `
 Aufgabe:
 ${this.currentTask}
 
@@ -1262,14 +2071,144 @@ Bitte gib einen hilfreichen Hinweis, der:
 4. Eventuell ein Beispiel oder eine verwandte Formel nennt
 5. Kurz und prägnant ist
 `;
+            }
             
             const response = await this.callAIAPI(prompt, 'hint', null, this.currentTaskContext?.topic);
             this.displayFeedback(response);
+            if (isAbiRewrite && this.currentTaskContext) {
+                this.currentTaskContext.hintRewriteDone = true;
+            }
         } catch (error) {
             console.error('Fehler beim Abrufen des Tipps:', error);
             this.showNotification('Fehler beim Abrufen des Tipps: ' + error.message, 'error');
         } finally {
             this.showLoading(false);
+            this.updateSolutionActionButtons();
+        }
+    }
+
+    async requestHilfestellung() {
+        if (this.solutionState.lastWasCorrect === null) {
+            this.showNotification('Bitte reiche zuerst eine Lösung ein, damit Hilfestellungen erzeugt werden können.', 'info');
+            return;
+        }
+
+        if (this.solutionState.lastWasCorrect === true) {
+            this.showNotification('Hilfestellung ist nur nötig, wenn die Lösung noch fehlerhaft ist.', 'info');
+            return;
+        }
+
+        if (!this.solutionState.lastUserSolution) {
+            this.showNotification('Bitte gib einen schriftlichen Lösungsweg ein, damit wir ihn markieren können.', 'warning');
+            return;
+        }
+
+        if (!this.solutionState.hilfestellungEligible) {
+            this.showNotification('Hilfestellung ist aktuell nicht verfügbar. Prüfe zuerst deine Lösung.', 'info');
+            return;
+        }
+
+        this.showLoading(true);
+
+        try {
+            const prompt = this.buildHilfestellungPrompt();
+            const response = await this.callAIAPI(prompt, 'hilfestellung', null, this.currentTaskContext?.topic);
+            this.solutionState.hilfestellungProvided = true;
+            this.solutionState.hilfestellungContent = response;
+            this.solutionState.correctedProvided = false;
+            this.displayFeedback(response);
+        } catch (error) {
+            console.error('Fehler bei der Hilfestellung:', error);
+            this.showNotification('Hilfestellung konnte nicht erstellt werden: ' + error.message, 'error');
+        } finally {
+            this.showLoading(false);
+            this.updateSolutionActionButtons();
+        }
+    }
+
+    async requestCorrectedSolution() {
+        if (!this.solutionState.hilfestellungProvided) {
+            this.showNotification('Fordere zuerst eine Hilfestellung an, bevor du eine korrigierte Fassung abrufst.', 'info');
+            return;
+        }
+
+        if (this.solutionState.lastWasCorrect === true) {
+            this.showNotification('Deine Lösung ist bereits korrekt. Du kannst stattdessen den optimalen Lösungsweg abrufen.', 'info');
+            return;
+        }
+
+        if (!this.solutionState.lastUserSolution) {
+            this.showNotification('Bitte gib deinen Lösungsweg schriftlich ein, damit wir ihn korrigieren können.', 'warning');
+            return;
+        }
+
+        if (this.solutionState.correctedProvided) {
+            this.showNotification('Eine korrigierte Version wurde bereits erzeugt.', 'info');
+            return;
+        }
+
+        this.showLoading(true);
+
+        try {
+            const prompt = this.buildCorrectedSolutionPrompt();
+            const response = await this.callAIAPI(prompt, 'corrected', null, this.currentTaskContext?.topic);
+            const STATUS_TOKEN = '__CORRECTION_STATUS:OK__';
+            const success = response.includes(STATUS_TOKEN);
+            const cleanedResponse = success
+                ? response.replace(STATUS_TOKEN, '').trim()
+                : response.trim();
+
+            if (success) {
+                Object.assign(this.solutionState, {
+                    correctedProvided: true,
+                    correctedContent: cleanedResponse,
+                    hilfestellungEligible: false,
+                    canRequestOptimal: true,
+                    lastWasCorrect: true
+                });
+                this.displayFeedback(cleanedResponse);
+            } else {
+                this.solutionState.correctedProvided = false;
+                this.solutionState.correctedContent = '';
+                this.solutionState.hilfestellungEligible = true;
+                this.solutionState.canRequestOptimal = false;
+                this.displayFeedback(cleanedResponse);
+                this.showNotification('Deine Lösung ist noch nicht vollständig korrekt. Schau sie dir erneut an oder fordere eine Hilfestellung an.', 'info');
+            }
+        } catch (error) {
+            console.error('Fehler bei der korrigierten Lösung:', error);
+            this.showNotification('Korrigierte Lösung konnte nicht erstellt werden: ' + error.message, 'error');
+        } finally {
+            this.showLoading(false);
+            this.updateSolutionActionButtons();
+        }
+    }
+
+    async requestOptimalSolution() {
+        if (!this.solutionState.canRequestOptimal) {
+            this.showNotification('Der optimale Lösungsweg wird erst nach einer korrekten oder korrigierten Lösung freigeschaltet.', 'info');
+            return;
+        }
+
+        if (this.solutionState.optimalDelivered) {
+            this.showNotification('Der optimale Lösungsweg wurde bereits angezeigt.', 'info');
+            return;
+        }
+
+        this.showLoading(true);
+
+        try {
+            const prompt = this.buildOptimalSolutionPrompt();
+            const response = await this.callAIAPI(prompt, 'optimal', null, this.currentTaskContext?.topic);
+            this.solutionState.optimalDelivered = true;
+            this.solutionState.optimalContent = response;
+            this.displayFeedback(response);
+        } catch (error) {
+            console.error('Fehler beim optimalen Lösungsweg:', error);
+            this.showNotification('Optimaler Lösungsweg konnte nicht erstellt werden: ' + error.message, 'error');
+        } finally {
+            this.showLoading(false);
+            this.updateSolutionActionButtons();
         }
     }
 
@@ -1324,6 +2263,13 @@ Verwende eine klare Struktur und deutsche mathematische Terminologie.
             }
             
             this.displayFeedback(response);
+            Object.assign(this.solutionState, {
+                hilfestellungEligible: false,
+                hilfestellungProvided: false,
+                correctedProvided: false,
+                canRequestOptimal: true
+            });
+            this.updateSolutionActionButtons();
             
             // Aktiviere Follow-up Chat nach Musterlösung
             this.enableFollowUpChat();
@@ -1534,6 +2480,14 @@ Verwende eine klare Struktur und deutsche mathematische Terminologie.
         }, 3000);
     }
 
+    getBackendUrl(path = '') {
+        if (!path) {
+            return this.backendApiBase;
+        }
+        const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+        return `${this.backendApiBase}${normalizedPath}`;
+    }
+
     // User Profile Management
     loadUserProfile() {
         const savedProfile = localStorage.getItem('user_profile');
@@ -1548,11 +2502,12 @@ Verwende eine klare Struktur und deutsche mathematische Terminologie.
     getDefaultProfile() {
         return {
             name: '',
-            grade: '12',
+            email: '',
+            grade: 'abitur',
             learningGoal: 'abitur-prep',
             weakTopics: [],
             learningStyle: 'step-by-step',
-            sessionLength: 'medium',
+            sessionLength: 'long',
             createdAt: new Date().toISOString(),
             lastUpdated: new Date().toISOString()
         };
@@ -1562,16 +2517,16 @@ Verwende eine klare Struktur und deutsche mathematische Terminologie.
         // Warte kurz, um sicherzustellen, dass alle DOM-Elemente verfügbar sind
         setTimeout(() => {
             const userNameEl = document.getElementById('user-name');
-            const userGradeEl = document.getElementById('user-grade');
-            const learningGoalEl = document.getElementById('learning-goal');
+            const userEmailEl = document.getElementById('user-email');
             const learningStyleEl = document.getElementById('learning-style');
-            const sessionLengthEl = document.getElementById('session-length');
             
             if (userNameEl) userNameEl.value = profile.name || '';
-            if (userGradeEl) userGradeEl.value = profile.grade || '12';
-            if (learningGoalEl) learningGoalEl.value = profile.learningGoal || 'abitur-prep';
+            if (userEmailEl) {
+                const emailValue = (this.currentUser && this.currentUser.email) || profile.email || '';
+                userEmailEl.value = emailValue;
+                profile.email = emailValue;
+            }
             if (learningStyleEl) learningStyleEl.value = profile.learningStyle || 'step-by-step';
-            if (sessionLengthEl) sessionLengthEl.value = profile.sessionLength || 'medium';
 
             // Setze Checkboxen für schwache Themen
             const weakTopicCheckboxes = document.querySelectorAll('#weak-topics input[type="checkbox"]');
@@ -1642,11 +2597,12 @@ Verwende eine klare Struktur und deutsche mathematische Terminologie.
     saveUserProfile() {
         const profile = {
             name: document.getElementById('user-name').value.trim(),
-            grade: document.getElementById('user-grade').value,
-            learningGoal: document.getElementById('learning-goal').value,
+            email: (document.getElementById('user-email')?.value || this.currentUser?.email || '').trim(),
+            grade: 'abitur',
+            learningGoal: 'abitur-prep',
             weakTopics: this.getSelectedWeakTopics(),
             learningStyle: document.getElementById('learning-style').value,
-            sessionLength: document.getElementById('session-length').value,
+            sessionLength: 'long',
             createdAt: this.userProfile.createdAt || new Date().toISOString(),
             lastUpdated: new Date().toISOString()
         };

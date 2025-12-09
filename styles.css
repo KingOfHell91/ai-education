@@ -354,6 +354,53 @@ body {
     margin-top: var(--spacing-3);
 }
 
+.preview-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-4);
+    justify-content: center;
+}
+
+.preview-item {
+    position: relative;
+    max-width: 240px;
+}
+
+.preview-item img {
+    width: 100%;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border-color);
+}
+
+.preview-name {
+    margin-top: var(--spacing-2);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+.preview-remove-btn {
+    position: absolute;
+    top: var(--spacing-2);
+    right: var(--spacing-2);
+    background: rgba(239, 68, 68, 0.9);
+    border: none;
+    color: white;
+    border-radius: 999px;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.preview-remove-btn:hover {
+    background: rgba(220, 38, 38, 0.95);
+}
+
 /* Image Description Area */
 .image-description-area {
     margin-top: var(--spacing-6);
@@ -399,6 +446,84 @@ body {
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     gap: var(--spacing-4);
     margin-bottom: var(--spacing-6);
+}
+
+.abi-sections {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: var(--spacing-6);
+}
+
+.abi-generator-section,
+.abi-admin-section {
+    background: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-5);
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-4);
+}
+
+.abi-generator-section h4,
+.abi-admin-section h4 {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    font-size: var(--font-size-lg);
+    color: var(--primary-color);
+}
+
+.abi-generator-status {
+    min-height: 24px;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.abi-upload-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-4);
+}
+
+.form-status {
+    min-height: 24px;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+
+.task-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-2);
+    max-height: 200px;
+    overflow-y: auto;
+    padding-right: var(--spacing-2);
+}
+
+.task-list li {
+    padding: var(--spacing-3);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--background-color);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+
+.task-link {
+    margin-top: var(--spacing-2);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-1);
+    color: var(--primary-color);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.task-link:hover {
+    text-decoration: underline;
 }
 
 .form-group {
@@ -647,6 +772,60 @@ body {
     flex: 1;
     min-width: 150px;
     justify-content: center;
+}
+
+.interaction-actions .btn[disabled] {
+    opacity: 0.65;
+    cursor: not-allowed;
+}
+
+.interaction-note {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin-top: var(--spacing-3);
+}
+
+.error-grob,
+.error-folge,
+.error-grobfolge,
+.error-notation,
+.correction-highlight,
+.optimal-highlight {
+    display: inline-block;
+    padding: 0.35rem 0.55rem;
+    border-radius: var(--radius-md);
+    margin: var(--spacing-1) 0;
+    line-height: 1.5;
+}
+
+.error-grob {
+    background: rgba(239, 68, 68, 0.15);
+    border-left: 4px solid #ef4444;
+}
+
+.error-folge {
+    background: rgba(250, 204, 21, 0.2);
+    border-left: 4px solid #facc15;
+}
+
+.error-grobfolge {
+    background: rgba(249, 115, 22, 0.18);
+    border-left: 4px solid #f97316;
+}
+
+.error-notation {
+    background: rgba(59, 130, 246, 0.18);
+    border-left: 4px solid #3b82f6;
+}
+
+.correction-highlight {
+    background: rgba(14, 165, 233, 0.18);
+    border-left: 4px solid #0ea5e9;
+}
+
+.optimal-highlight {
+    background: rgba(16, 185, 129, 0.18);
+    border-left: 4px solid #10b981;
 }
 
 #feedback-area {

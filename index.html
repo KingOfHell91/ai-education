@@ -173,6 +173,10 @@
                         <i class="fas fa-magic"></i>
                         Aufgabe generieren
                     </button>
+                    <button class="tab-btn" data-tab="abi-generate">
+                        <i class="fas fa-user-graduate"></i>
+                        Abitur
+                    </button>
                     <button class="tab-btn" data-tab="user-profile">
                         <i class="fas fa-user"></i>
                         Profil
@@ -216,14 +220,14 @@
                         <div class="image-upload-area">
                             <div class="upload-zone" id="upload-zone">
                                 <i class="fas fa-cloud-upload-alt"></i>
-                                <p>Klicke hier oder ziehe ein Bild hierher</p>
-                                <input type="file" id="image-input" accept="image/*" hidden>
+                                    <p class="upload-hint">Klicke hier oder ziehe ein Bild hierher</p>
+                                    <input type="file" id="image-input" accept="image/*" hidden multiple>
                             </div>
                             <div class="image-preview" id="image-preview" style="display: none;">
-                                <img id="preview-img" src="" alt="Vorschau">
-                                <button class="btn btn-danger btn-sm" id="remove-image">
+                                    <div class="preview-list" id="image-preview-list"></div>
+                                    <button class="btn btn-danger btn-sm" id="remove-all-images">
                                     <i class="fas fa-times"></i>
-                                    Entfernen
+                                        Alle entfernen
                                 </button>
                             </div>
                         </div>
@@ -288,6 +292,65 @@
                     </div>
                 </div>
 
+                <!-- Abitur Generate Tab -->
+                <div class="tab-content" id="abi-generate">
+                    <div class="input-container">
+                        <div class="input-header">
+                            <h3>Abitur-Modus</h3>
+                            <p>Erstelle Abitur-Aufgaben aus dem Aufgabenpool oder pflege neue Aufgaben über PDF-Dateien ein.</p>
+                        </div>
+                        <div class="abi-sections">
+                            <div class="abi-generator-section" id="abi-generator-section">
+                                <h4><i class="fas fa-random"></i> Aufgabe generieren</h4>
+                                <p>Starte die Generierung, um eine zufällige Abitur-Aufgabe zu variieren. Die Lernpräferenzen werden erst beim Hint berücksichtigt.</p>
+                                <button class="btn btn-primary" id="abi-generate-btn">
+                                    <i class="fas fa-magic"></i>
+                                    Abitur-Aufgabe erstellen
+                                </button>
+                                <div class="abi-generator-status" id="abi-generator-status"></div>
+                            </div>
+                            <div class="abi-admin-section">
+                                <h4><i class="fas fa-folder-plus"></i> Aufgabenpool verwalten</h4>
+                                <form id="abi-upload-form" class="abi-upload-form">
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label for="abi-pdf-input">PDF-Datei (eine Aufgabe):</label>
+                                            <input type="file" id="abi-pdf-input" accept="application/pdf" required>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="abi-title-input">Titel (optional):</label>
+                                            <input type="text" id="abi-title-input" placeholder="z.B. Analysis 2022 Teil 1">
+                                        </div>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label for="abi-year-input">Jahr:</label>
+                                            <input type="number" id="abi-year-input" min="2000" max="2100" placeholder="2024">
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="abi-subject-input">Schwerpunkt (optional):</label>
+                                            <input type="text" id="abi-subject-input" placeholder="z.B. Analysis, Stochastik">
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="abi-tags-input">Tags (Komma getrennt, optional):</label>
+                                        <input type="text" id="abi-tags-input" placeholder="Parabel, Extremwert, Ableitung">
+                                    </div>
+                                    <button type="submit" class="btn btn-secondary" id="abi-upload-btn">
+                                        <i class="fas fa-upload"></i>
+                                        Aufgabe hochladen
+                                    </button>
+                                </form>
+                                <div id="abi-upload-status" class="form-status"></div>
+                                <div class="abi-task-list">
+                                    <h5>Vorhandene Abitur-Aufgaben</h5>
+                                    <ul id="abi-task-list" class="task-list"></ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- User Profile Tab -->
                 <div class="tab-content" id="user-profile">
                     <div class="input-container">
@@ -304,30 +367,14 @@
                                         <input type="text" id="user-name" placeholder="Dein Name">
                                     </div>
                                     <div class="form-group">
-                                        <label for="user-grade">Klasse/Stufe:</label>
-                                        <select id="user-grade">
-                                            <option value="10">Klasse 10</option>
-                                            <option value="11">Klasse 11</option>
-                                            <option value="12">Klasse 12</option>
-                                            <option value="abitur">Abitur-Vorbereitung</option>
-                                            <option value="university">Universität</option>
-                                        </select>
+                                        <label for="user-email">E-Mail-Adresse:</label>
+                                        <input type="email" id="user-email" placeholder="Wird nach dem Login automatisch angezeigt" readonly>
                                     </div>
                                 </div>
                             </div>
 
                             <div class="profile-section">
-                                <h4><i class="fas fa-target"></i> Lernziele</h4>
-                                <div class="form-group">
-                                    <label for="learning-goal">Hauptziel:</label>
-                                    <select id="learning-goal">
-                                        <option value="abitur-prep">Abitur-Vorbereitung</option>
-                                        <option value="grade-improvement">Notenverbesserung</option>
-                                        <option value="concept-understanding">Verständnis vertiefen</option>
-                                        <option value="exam-prep">Prüfungsvorbereitung</option>
-                                        <option value="general-practice">Allgemeine Übung</option>
-                                    </select>
-                                </div>
+                                <h4><i class="fas fa-target"></i> Themenschwerpunkte</h4>
                                 <div class="form-group">
                                     <label for="weak-topics">Schwache Themen (mehrere möglich):</label>
                                     <div class="checkbox-group" id="weak-topics">
@@ -363,14 +410,6 @@
                                             <option value="step-by-step">Schritt-für-Schritt</option>
                                             <option value="conceptual">Konzeptuell</option>
                                             <option value="practical">Praktisch (Beispiele)</option>
-                                        </select>
-                                    </div>
-                                    <div class="form-group">
-                                        <label for="session-length">Sitzungslänge:</label>
-                                        <select id="session-length">
-                                            <option value="short">Kurz (15-30 Min)</option>
-                                            <option value="medium">Mittel (30-60 Min)</option>
-                                            <option value="long">Lang (60+ Min)</option>
                                         </select>
                                     </div>
                                 </div>
