@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const abiTasksRouter = require('./routes/abiTasks');
+const authRouter = require('./routes/auth');
 
 const app = express();
 
@@ -21,6 +22,7 @@ app.get('/health', (_req, res) => {
 });
 
 app.use('/api/abi-tasks', abiTasksRouter);
+app.use('/api/auth', authRouter);
 
 // Serve uploaded PDFs statically (optional fallback)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));

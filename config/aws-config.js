@@ -2,10 +2,19 @@
 // Schaltet zwischen Mock-Modus (lokale Entwicklung) und Production (echte AWS-Services)
 
 const AWS_CONFIG = {
-    // Mock-Modus für lokale Entwicklung (keine AWS-Services erforderlich)
-    USE_MOCK: true, // Auf false setzen für echte AWS-Integration
+    // Auth-Modus: 'mock', 'backend', 'production'
+    // - 'mock': Simuliert Authentifizierung mit localStorage (nur für UI-Tests)
+    // - 'backend': Nutzt lokalen Express-Server mit SQLite (Standard für Entwicklung)
+    // - 'production': Nutzt echte AWS Cognito (für Production)
+    AUTH_MODE: 'backend',
     
-    // AWS Amplify Konfiguration (wird nur verwendet wenn USE_MOCK = false)
+    // Backend-API URL (nur im 'backend'-Modus verwendet)
+    API_BASE_URL: 'http://localhost:4000',
+    
+    // Legacy: USE_MOCK wird durch AUTH_MODE ersetzt
+    USE_MOCK: false, // Auf true nur für Mock-Modus
+    
+    // AWS Amplify Konfiguration (wird nur verwendet wenn AUTH_MODE = 'production')
     amplify: {
         Auth: {
             // Amazon Cognito Region

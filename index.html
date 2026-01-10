@@ -52,7 +52,7 @@
     <script src="ai/data-aggregator.js"></script>
     <script src="ai/prompt-advisor.js"></script>
 </head>
-<body>
+<body class="sidebar-open">
     <!-- Auth Check Script (muss vor dem Rest laden) -->
     <script>
         // Prüfe Auth-Status beim Laden der Seite
@@ -69,6 +69,10 @@
                     // Eingeloggt, zeige User-Info
                     console.log('[Auth Check] User authenticated:', user.email);
                     
+                    // Speichere User-Daten global für andere Scripts
+                    window.currentUser = user;
+                    window.authService = authService;
+                    
                     // Fülle User-Info im Header
                     const userInfo = document.getElementById('user-info');
                     const userNameDisplay = document.getElementById('user-name-display');
@@ -76,8 +80,8 @@
                     const userAvatarInitials = document.getElementById('user-avatar-initials');
                     
                     if (userInfo && userNameDisplay && userEmailDisplay && userAvatarInitials) {
-                        // Setze User-Daten
-                        const userName = user.attributes?.name || user.email.split('@')[0];
+                        // Setze User-Daten (kompatibel mit Backend- und Mock-Modus)
+                        const userName = user.name || user.attributes?.name || user.email.split('@')[0];
                         userNameDisplay.textContent = userName;
                         userEmailDisplay.textContent = user.email;
                         
@@ -92,6 +96,18 @@
                         
                         // Zeige User-Info
                         userInfo.style.display = 'flex';
+                    }
+                    
+                    // Setup Settings Button
+                    const settingsBtn = document.getElementById('settings-btn');
+                    if (settingsBtn) {
+                        settingsBtn.addEventListener('click', () => {
+                            // Wechsle zum Profil-Tab
+                            const profileTab = document.querySelector('[data-tab="user-profile"]');
+                            if (profileTab) {
+                                profileTab.click();
+                            }
+                        });
                     }
                     
                     // Setup Logout Button
@@ -115,6 +131,9 @@
             }
         })();
     </script>
+    <button class="sidebar-toggle" id="sidebar-toggle">
+        <i class="fas fa-bars"></i>
+    </button>
     <!-- Header -->
     <header class="header">
         <div class="container">
@@ -126,8 +145,8 @@
                 <ul>
                     <li><a href="#home" class="active">Start</a></li>
                     <li><a href="#tasks">Aufgaben</a></li>
-                    <li><a href="#profile">Profil</a></li>
-                    <li><a href="#analytics">Analytics</a></li>
+                    <li><a href="#user-profile">Profil</a></li>
+                    <li><a href="#results-section">Analytics</a></li>
                 </ul>
             </nav>
             <!-- User Info (wird dynamisch befüllt nach Login) -->
@@ -139,10 +158,14 @@
                     <div class="user-name" id="user-name-display">User Name</div>
                     <div class="user-email" id="user-email-display">user@email.com</div>
                 </div>
-                <button class="logout-btn" id="logout-btn">
-                    <i class="fas fa-sign-out-alt"></i>
-                    Abmelden
-                </button>
+                <div class="user-actions">
+                    <button class="settings-btn" id="settings-btn" title="Einstellungen">
+                        <i class="fas fa-cog"></i>
+                    </button>
+                    <button class="logout-btn" id="logout-btn" title="Abmelden">
+                        <i class="fas fa-sign-out-alt"></i>
+                    </button>
+                </div>
             </div>
         </div>
     </header>
@@ -151,15 +174,49 @@
     <main class="main">
         <div class="container">
             <!-- Welcome Section -->
-            <section class="welcome-section">
-                <div class="welcome-content">
-                    <h2>Willkommen beim adaptiven Mathematik-Tutor</h2>
-                    <p>Lass uns gemeinsam deine Mathematik-Fähigkeiten verbessern! Du kannst Aufgaben hochladen oder neue generieren lassen.</p>
+            <section class="welcome-section" id="home">
+                <div class="welcome-content hero-grid">
+                    <div class="hero-card">
+                        <div class="hero-content">
+                            <div class="hero-logo">∑</div>
+                            <div>
+                                <div class="eyebrow">Willkommen zurück</div>
+                                <h2>Adaptiver Mathematik-Coach</h2>
+                                <p>Starte auf einer dunklen, ruhigen Bühne: Rot setzt Akzente, dezente grüne Konturen leiten dich durch Analyse, Uploads und neue Aufgaben.</p>
+                                <div class="hero-actions">
+                                    <a class="btn btn-primary" href="#tasks">
+                                        <i class="fas fa-play"></i>
+                                        Schnellstart
+                                    </a>
+                                    <a class="btn btn-ghost" href="#generate-task">
+                                        <i class="fas fa-magic"></i>
+                                        Aufgabe generieren
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="hero-highlights">
+                        <div class="pill-card">
+                            <i class="fas fa-pen-nib"></i>
+                            <div>
+                                <strong>Text & Bilder</strong>
+                                <span>Gib Aufgaben direkt ein oder lade Fotos für eine ruhige, präzise Analyse.</span>
+                            </div>
+                        </div>
+                        <div class="pill-card">
+                            <i class="fas fa-wave-square"></i>
+                            <div>
+                                <strong>Digitaler Flow</strong>
+                                <span>Sanfte Übergänge, schwarzer Grundton, rote Highlights und grüne Glows für Fokus.</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </section>
 
             <!-- Input Options -->
-            <section class="input-section">
+            <section class="input-section" id="tasks">
                 <div class="input-tabs">
                     <button class="tab-btn active" data-tab="text-input">
                         <i class="fas fa-keyboard"></i>
@@ -475,6 +532,20 @@
                 <div class="spinner"></div>
                 <p>KI analysiert deine Eingabe...</p>
             </div>
+
+            <!-- Tutor View Demo Section (Dev/Test) -->
+            <section class="tutor-view-demo-section" id="tutor-view-demo-section" style="display: none;">
+                <h3><i class="fas fa-flask"></i> Tutor Output Demo</h3>
+                <p style="color: var(--text-secondary); margin-bottom: var(--spacing-4);">
+                    Demo-Ansicht für strukturiertes KI-Feedback mit Schritten, Info-Boxen und Hint-Chips.
+                </p>
+                <div id="tutor-view-demo"></div>
+                <div style="margin-top: var(--spacing-4);">
+                    <button class="btn btn-secondary" id="toggle-tutor-demo">
+                        <i class="fas fa-eye-slash"></i> Demo ausblenden
+                    </button>
+                </div>
+            </section>
         </div>
     </main>
 
@@ -517,6 +588,10 @@
         </div>
     </div>
 
+    <!-- Tutor Output Model & View -->
+    <script src="tutor-model.js"></script>
+    <script src="tutor-view.js"></script>
+    
     <script src="script.js"></script>
 </body>
 </html>

@@ -1,5 +1,554 @@
 // Math Tutor AI - JavaScript für KI-Integration und Interaktivität
 
+// ==================== Error Analysis Schema für Structured Outputs ====================
+
+/**
+ * JSON-Schema für die strukturierte Fehleranalyse-Antwort
+ * Wird für OpenAI Structured Outputs und Anthropic verwendet
+ */
+const ERROR_ANALYSIS_SCHEMA = {
+    name: "error_analysis_response",
+    strict: true,
+    schema: {
+        type: "object",
+        properties: {
+            steps: {
+                type: "array",
+                description: "Nummerierte Teilschritte des Schüler-Rechenwegs",
+                items: {
+                    type: "object",
+                    properties: {
+                        index: { 
+                            type: "number",
+                            description: "Schritt-Index (beginnend bei 1)"
+                        },
+                        rawText: { 
+                            type: "string",
+                            description: "Originaltext des Schülers"
+                        },
+                        latex: { 
+                            type: "string",
+                            description: "Normalisierte LaTeX-Darstellung mit \\( ... \\) Delimitern"
+                        },
+                        errorType: { 
+                            type: "string",
+                            enum: ["none", "logic", "calc", "followup", "formal"],
+                            description: "Fehlertyp: none=korrekt, logic=Logikfehler, calc=Rechenfehler, followup=Folgefehler, formal=Formfehler"
+                        }
+                    },
+                    required: ["index", "rawText", "latex", "errorType"],
+                    additionalProperties: false
+                }
+            },
+            uiElements: {
+                type: "array",
+                description: "UI-Elemente für visuelle Markierungen (in Stufe 1 meist leer oder nur kurze Labels)",
+                items: {
+                    type: "object",
+                    properties: {
+                        type: { 
+                            type: "string",
+                            enum: ["info_box", "hint_chip", "link_marker"],
+                            description: "Typ des UI-Elements"
+                        },
+                        stepIndex: { 
+                            type: "number",
+                            description: "Bezug auf einen Schritt (index)"
+                        },
+                        color: { 
+                            type: "string",
+                            enum: ["red", "green", "orange", "blue"],
+                            description: "Farbe: red=Logikfehler, green=Rechenfehler, orange=Folgefehler, blue=formal"
+                        },
+                        title: { 
+                            type: "string",
+                            description: "Kurzer Titel (z.B. 'Logikfehler')"
+                        },
+                        text: { 
+                            type: "string",
+                            description: "Kurzer Text ohne Lösungshinweise"
+                        }
+                    },
+                    required: ["type", "stepIndex", "color", "title", "text"],
+                    additionalProperties: false
+                }
+            },
+            feedback: {
+                type: "null",
+                description: "In Stufe 1 immer null (Feedback nur in späteren Stufen)"
+            }
+        },
+        required: ["steps", "uiElements", "feedback"],
+        additionalProperties: false
+    }
+};
+
+// Mapping von errorType zu Farben für uiElements
+const ERROR_TYPE_COLOR_MAP = {
+    'logic': 'red',
+    'calc': 'green', 
+    'followup': 'orange',
+    'formal': 'blue',
+    'none': 'blue'
+};
+
+// ==================== LaTeX Sanitizer ====================
+
+/**
+ * Bekannte LaTeX-Befehle mit ihrer erwarteten Struktur
+ * Format: { befehl: { args: anzahl_pflichtargumente, optArgs: anzahl_optionale_argumente } }
+ */
+const LATEX_COMMANDS = {
+    // Brüche
+    'frac': { args: 2, optArgs: 0 },
+    'dfrac': { args: 2, optArgs: 0 },
+    'tfrac': { args: 2, optArgs: 0 },
+    // Wurzeln
+    'sqrt': { args: 1, optArgs: 1 },
+    // Potenzen und Indizes (werden separat behandelt)
+    // Summen und Produkte
+    'sum': { args: 0, optArgs: 0, hasLimits: true },
+    'prod': { args: 0, optArgs: 0, hasLimits: true },
+    'int': { args: 0, optArgs: 0, hasLimits: true },
+    'lim': { args: 0, optArgs: 0, hasLimits: true },
+    // Text in Mathe
+    'text': { args: 1, optArgs: 0 },
+    'mathrm': { args: 1, optArgs: 0 },
+    'mathbf': { args: 1, optArgs: 0 },
+    'mathit': { args: 1, optArgs: 0 },
+    // Überstreichungen
+    'overline': { args: 1, optArgs: 0 },
+    'underline': { args: 1, optArgs: 0 },
+    'hat': { args: 1, optArgs: 0 },
+    'vec': { args: 1, optArgs: 0 },
+    // Klammern
+    'left': { args: 0, optArgs: 0, needsPair: 'right' },
+    'right': { args: 0, optArgs: 0, needsPair: 'left' },
+    // Trigonometrische Funktionen (keine Argumente in Klammern nötig)
+    'sin': { args: 0, optArgs: 0 },
+    'cos': { args: 0, optArgs: 0 },
+    'tan': { args: 0, optArgs: 0 },
+    'cot': { args: 0, optArgs: 0 },
+    'sec': { args: 0, optArgs: 0 },
+    'csc': { args: 0, optArgs: 0 },
+    'arcsin': { args: 0, optArgs: 0 },
+    'arccos': { args: 0, optArgs: 0 },
+    'arctan': { args: 0, optArgs: 0 },
+    // Logarithmen
+    'log': { args: 0, optArgs: 0 },
+    'ln': { args: 0, optArgs: 0 },
+    'lg': { args: 0, optArgs: 0 },
+    // Andere
+    'cdot': { args: 0, optArgs: 0 },
+    'times': { args: 0, optArgs: 0 },
+    'div': { args: 0, optArgs: 0 },
+    'pm': { args: 0, optArgs: 0 },
+    'mp': { args: 0, optArgs: 0 },
+    'to': { args: 0, optArgs: 0 },
+    'infty': { args: 0, optArgs: 0 },
+    'alpha': { args: 0, optArgs: 0 },
+    'beta': { args: 0, optArgs: 0 },
+    'gamma': { args: 0, optArgs: 0 },
+    'delta': { args: 0, optArgs: 0 },
+    'pi': { args: 0, optArgs: 0 },
+    'theta': { args: 0, optArgs: 0 },
+    'lambda': { args: 0, optArgs: 0 },
+    'sigma': { args: 0, optArgs: 0 },
+    'omega': { args: 0, optArgs: 0 },
+    'neq': { args: 0, optArgs: 0 },
+    'leq': { args: 0, optArgs: 0 },
+    'geq': { args: 0, optArgs: 0 },
+    'approx': { args: 0, optArgs: 0 }
+};
+
+/**
+ * Sanitiert LaTeX-Inhalt und korrigiert häufige Fehler
+ * @param {string} content - Der zu sanitierende Inhalt
+ * @returns {string} - Sanitierter Inhalt
+ */
+function sanitizeLatex(content) {
+    if (!content || typeof content !== 'string') {
+        return content;
+    }
+
+    let sanitized = content;
+
+    // 1. Entferne lose Backslashes (Backslash ohne folgenden Befehl)
+    sanitized = sanitized.replace(/\\(?![a-zA-Z{}\[\]()$])/g, '');
+
+    // 2. Korrigiere unbalancierte geschweifte Klammern in bekannten Befehlen
+    sanitized = fixBracesInCommands(sanitized);
+
+    // 3. Balanciere allgemeine Klammern
+    sanitized = balanceBrackets(sanitized, '{', '}');
+    sanitized = balanceBrackets(sanitized, '(', ')');
+    sanitized = balanceBrackets(sanitized, '[', ']');
+
+    // 4. Korrigiere \left ohne \right und umgekehrt
+    sanitized = fixLeftRightPairs(sanitized);
+
+    // 5. Entferne doppelte Leerzeichen
+    sanitized = sanitized.replace(/  +/g, ' ');
+
+    // 6. Korrigiere häufige Tippfehler
+    sanitized = fixCommonTypos(sanitized);
+
+    return sanitized;
+}
+
+/**
+ * Korrigiert Klammern in bekannten LaTeX-Befehlen
+ */
+function fixBracesInCommands(content) {
+    let result = content;
+
+    // \frac mit fehlenden Klammern korrigieren
+    // Pattern: \frac gefolgt von etwas, das keine vollständigen {}{} hat
+    result = result.replace(/\\frac\s*{([^{}]*)}\s*([^{])/g, (match, num, afterNum) => {
+        // Prüfe ob afterNum der Anfang eines Arguments ist oder Text
+        if (afterNum === '{') {
+            return match; // Schon korrekt
+        }
+        // Versuche ein einzelnes Zeichen als Nenner zu interpretieren
+        if (/[a-zA-Z0-9]/.test(afterNum)) {
+            return `\\frac{${num}}{${afterNum}}`;
+        }
+        return match;
+    });
+
+    // \frac ohne Klammern: \frac ab -> \frac{a}{b}
+    result = result.replace(/\\frac\s+([a-zA-Z0-9])\s*([a-zA-Z0-9])(?![{])/g, '\\frac{$1}{$2}');
+
+    // \sqrt mit fehlendem Argument
+    result = result.replace(/\\sqrt\s+([a-zA-Z0-9])(?![{\[])/g, '\\sqrt{$1}');
+
+    // \sqrt[] mit fehlendem Hauptargument
+    result = result.replace(/\\sqrt\[([^\]]*)\]\s*([a-zA-Z0-9])(?![{])/g, '\\sqrt[$1]{$2}');
+
+    // Potenzen: x^10 -> x^{10} (wenn mehr als ein Zeichen)
+    result = result.replace(/\^([0-9]{2,})/g, '^{$1}');
+    result = result.replace(/\^([a-zA-Z]{2,})/g, '^{$1}');
+
+    // Indizes: x_10 -> x_{10} (wenn mehr als ein Zeichen)
+    result = result.replace(/_([0-9]{2,})/g, '_{$1}');
+    result = result.replace(/_([a-zA-Z]{2,})/g, '_{$1}');
+
+    // \text, \mathrm etc. mit fehlendem Argument
+    ['text', 'mathrm', 'mathbf', 'mathit'].forEach(cmd => {
+        const pattern = new RegExp(`\\\\${cmd}\\s+([a-zA-Z0-9]+)(?![{])`, 'g');
+        result = result.replace(pattern, `\\${cmd}{$1}`);
+    });
+
+    return result;
+}
+
+/**
+ * Balanciert öffnende und schließende Klammern
+ */
+function balanceBrackets(content, openBracket, closeBracket) {
+    let result = content;
+    let openCount = 0;
+    let closeCount = 0;
+
+    // Zähle Klammern
+    for (const char of result) {
+        if (char === openBracket) openCount++;
+        if (char === closeBracket) closeCount++;
+    }
+
+    // Füge fehlende schließende Klammern am Ende hinzu
+    while (closeCount < openCount) {
+        result += closeBracket;
+        closeCount++;
+    }
+
+    // Füge fehlende öffnende Klammern am Anfang hinzu (seltener, aber möglich)
+    while (openCount < closeCount) {
+        result = openBracket + result;
+        openCount++;
+    }
+
+    return result;
+}
+
+/**
+ * Korrigiert \left ohne \right und umgekehrt
+ */
+function fixLeftRightPairs(content) {
+    let result = content;
+
+    // Zähle \left und \right
+    const leftMatches = result.match(/\\left/g) || [];
+    const rightMatches = result.match(/\\right/g) || [];
+
+    const leftCount = leftMatches.length;
+    const rightCount = rightMatches.length;
+
+    // Füge fehlende \right. am Ende hinzu
+    for (let i = rightCount; i < leftCount; i++) {
+        result += '\\right.';
+    }
+
+    // Füge fehlende \left. am Anfang hinzu
+    for (let i = leftCount; i < rightCount; i++) {
+        // Finde die Position des ersten \right und füge \left. davor ein
+        const firstRight = result.indexOf('\\right');
+        if (firstRight > 0) {
+            result = result.slice(0, firstRight) + '\\left.' + result.slice(firstRight);
+        } else {
+            result = '\\left.' + result;
+        }
+    }
+
+    return result;
+}
+
+/**
+ * Korrigiert häufige LaTeX-Tippfehler
+ */
+function fixCommonTypos(content) {
+    let result = content;
+
+    // Doppelte Backslashes vor Befehlen (außer bei \\)
+    result = result.replace(/\\\\([a-zA-Z])/g, '\\$1');
+
+    // Fehlende Leerzeichen nach bestimmten Befehlen
+    result = result.replace(/\\(sin|cos|tan|log|ln|lim)([a-zA-Z])/g, '\\$1 $2');
+
+    // Korrigiere / zu \frac wenn in bestimmten Kontexten
+    // (Vorsichtig - nur in offensichtlichen Fällen)
+    // z.B. (a+b)/(c+d) wird nicht automatisch konvertiert, da es mehrdeutig sein kann
+
+    // Leere Klammern entfernen: {} wenn alleinstehend
+    result = result.replace(/\{\s*\}/g, '');
+
+    // Doppelte Klammern reduzieren: {{x}} -> {x}
+    result = result.replace(/\{\{([^{}]*)\}\}/g, '{$1}');
+
+    return result;
+}
+
+/**
+ * Korrigiert gemischte und fehlerhafte LaTeX-Delimiter
+ * Probleme wie: $...\( oder \)...$ werden zu konsistenten $...$ konvertiert
+ * @param {string} content - Der zu korrigierende Inhalt
+ * @returns {string} - Korrigierter Inhalt
+ */
+function fixMixedDelimiters(content) {
+    if (!content || typeof content !== 'string') {
+        return content;
+    }
+
+    let result = content;
+
+    // 1. Normalisiere alle Math-Delimiter zu $...$ Format
+    // Konvertiere \( zu $ und \) zu $
+    // Aber nur wenn sie nicht korrekt gepaart sind
+    
+    // Zähle die verschiedenen Delimiter
+    const dollarCount = (result.match(/\$/g) || []).length;
+    const openParenCount = (result.match(/\\\(/g) || []).length;
+    const closeParenCount = (result.match(/\\\)/g) || []).length;
+    
+    // Wenn gemischte Delimiter vorhanden sind, normalisiere zu $
+    if ((openParenCount > 0 || closeParenCount > 0) && dollarCount > 0) {
+        // Ersetze alle \( und \) durch $
+        result = result.replace(/\\\(/g, '$');
+        result = result.replace(/\\\)/g, '$');
+    }
+    
+    // 2. Korrigiere Fälle wo $ direkt von \( oder \) gefolgt/vorangegangen wird
+    // z.B. "$f(x)\(" -> "$f(x)$"
+    result = result.replace(/\$([^$]*?)\\\(/g, '$$$1$$');
+    result = result.replace(/\\\)([^$]*?)\$/g, '$$$1$$');
+    
+    // 3. Korrigiere alleinstehende \( und \) die nicht gepaart sind
+    result = result.replace(/\\\((?![^]*?\\\))/g, '$');
+    result = result.replace(/(?<!\\\()[^]*?\\\)/g, (match) => {
+        // Nur ersetzen wenn kein \( davor
+        if (!match.includes('\\(')) {
+            return match.replace(/\\\)/g, '$');
+        }
+        return match;
+    });
+    
+    // 4. Stelle sicher, dass $ immer paarweise vorkommt
+    // Zähle $ und füge fehlendes hinzu wenn ungerade
+    const finalDollarCount = (result.match(/\$/g) || []).length;
+    if (finalDollarCount % 2 !== 0) {
+        // Finde die letzte ungerade Position und schließe dort
+        let count = 0;
+        let lastOpenIndex = -1;
+        for (let i = 0; i < result.length; i++) {
+            if (result[i] === '$') {
+                count++;
+                if (count % 2 === 1) {
+                    lastOpenIndex = i;
+                }
+            }
+        }
+        // Füge schließendes $ am Ende des Satzes oder Absatzes hinzu
+        if (lastOpenIndex !== -1) {
+            const afterOpen = result.substring(lastOpenIndex + 1);
+            const endOfSentence = afterOpen.search(/[.!?\n]/);
+            if (endOfSentence !== -1) {
+                const insertPos = lastOpenIndex + 1 + endOfSentence;
+                result = result.slice(0, insertPos) + '$' + result.slice(insertPos);
+            } else {
+                result += '$';
+            }
+        }
+    }
+
+    // 5. Entferne leere Math-Blöcke: $$ oder $  $
+    result = result.replace(/\$\s*\$/g, '');
+
+    return result;
+}
+
+/**
+ * Entfernt deutschen Text aus Math-Mode
+ * z.B. "$f(x) und g(x)$" -> "$f(x)$ und $g(x)$"
+ */
+function extractTextFromMath(content) {
+    if (!content || typeof content !== 'string') {
+        return content;
+    }
+
+    let result = content;
+    
+    // Deutsche Wörter die nicht im Math-Mode sein sollten
+    const germanWords = [
+        'und', 'oder', 'mit', 'für', 'von', 'auf', 'dem', 'den', 'der', 'die', 'das',
+        'indem', 'wobei', 'sodass', 'wenn', 'falls', 'ob', 'sowie',
+        'Berechne', 'Bestimme', 'Untersuche', 'Zeige', 'Gegeben', 'Gesucht',
+        'liegt', 'liegen', 'ist', 'sind', 'hat', 'haben',
+        'Graph', 'Graphen', 'Punkt', 'Funktion', 'Gleichung',
+        'auf dem', 'auf der', 'in dem', 'in der'
+    ];
+
+    // Finde Math-Blöcke und prüfe auf deutsche Wörter
+    result = result.replace(/\$([^$]+)\$/g, (match, mathContent) => {
+        let modified = mathContent;
+        let hasGermanWords = false;
+        
+        // Prüfe ob deutsche Wörter im Math-Block sind
+        for (const word of germanWords) {
+            const wordPattern = new RegExp(`\\b${word}\\b`, 'gi');
+            if (wordPattern.test(modified)) {
+                hasGermanWords = true;
+                break;
+            }
+        }
+        
+        if (hasGermanWords) {
+            // Teile den Math-Block an deutschen Wörtern auf
+            const parts = [];
+            let currentPart = '';
+            const tokens = modified.split(/(\s+)/);
+            
+            for (const token of tokens) {
+                const isGermanWord = germanWords.some(w => 
+                    new RegExp(`^${w}[,.]?$`, 'i').test(token.trim())
+                );
+                
+                if (isGermanWord) {
+                    if (currentPart.trim()) {
+                        parts.push({ type: 'math', content: currentPart.trim() });
+                    }
+                    parts.push({ type: 'text', content: token });
+                    currentPart = '';
+                } else {
+                    currentPart += token;
+                }
+            }
+            
+            if (currentPart.trim()) {
+                parts.push({ type: 'math', content: currentPart.trim() });
+            }
+            
+            // Baue den String neu zusammen
+            return parts.map(p => {
+                if (p.type === 'math' && p.content) {
+                    return '$' + p.content + '$';
+                }
+                return p.content;
+            }).join('');
+        }
+        
+        return match;
+    });
+
+    // Bereinige doppelte $$ die durch die Aufteilung entstanden sein könnten
+    result = result.replace(/\$\s*\$/g, '');
+    result = result.replace(/\$\$/g, (match, offset, string) => {
+        // Prüfe ob es Display-Math ist ($$...$$) oder ein Fehler
+        const before = string.substring(Math.max(0, offset - 2), offset);
+        if (before.endsWith('$')) {
+            return match; // Es ist legitimes $$
+        }
+        return '$ $'; // Füge Leerzeichen ein
+    });
+
+    return result;
+}
+
+/**
+ * Wendet LaTeX-Sanitierung auf API-Antworten an
+ * @param {string} response - API-Antwort
+ * @returns {string} - Sanitierte Antwort
+ */
+function sanitizeApiResponse(response) {
+    if (!response || typeof response !== 'string') {
+        return response;
+    }
+
+    let result = response;
+
+    // 0. ZUERST: Korrigiere gemischte Delimiter (wichtigster Schritt!)
+    result = fixMixedDelimiters(result);
+
+    // 1. Extrahiere deutschen Text aus Math-Blöcken
+    result = extractTextFromMath(result);
+
+    // 2. Display-Math: $$...$$
+    result = result.replace(/\$\$([\s\S]*?)\$\$/g, (match, latex) => {
+        return '$$' + sanitizeLatex(latex) + '$$';
+    });
+
+    // 3. Inline-Math: $...$
+    result = result.replace(/\$([^\$]+)\$/g, (match, latex) => {
+        return '$' + sanitizeLatex(latex) + '$';
+    });
+
+    // MathJax Display: \[...\]
+    result = result.replace(/\\\[([\s\S]*?)\\\]/g, (match, latex) => {
+        return '\\[' + sanitizeLatex(latex) + '\\]';
+    });
+
+    // MathJax Inline: \(...\)
+    result = result.replace(/\\\(([\s\S]*?)\\\)/g, (match, latex) => {
+        return '\\(' + sanitizeLatex(latex) + '\\)';
+    });
+
+    return result;
+}
+
+// Exportiere für globalen Zugriff
+if (typeof window !== 'undefined') {
+    window.LaTeXSanitizer = {
+        sanitizeLatex,
+        sanitizeApiResponse,
+        fixBracesInCommands,
+        balanceBrackets,
+        fixLeftRightPairs,
+        fixCommonTypos,
+        fixMixedDelimiters,
+        extractTextFromMath,
+        LATEX_COMMANDS
+    };
+}
+
 class MathTutorAI {
     constructor() {
         // Auth Service
@@ -78,7 +627,45 @@ class MathTutorAI {
         this.setupImageUpload();
         this.setupAbiAdminForm();
         this.setupAbiGenerator();
+        this.setupSidebarToggle();
+        this.setupTutorViewDemo();
         // API-Konfiguration wird jetzt im Profil-Tab verwaltet
+    }
+
+    setupTutorViewDemo() {
+        const demoSection = document.getElementById('tutor-view-demo-section');
+        const toggleBtn = document.getElementById('toggle-tutor-demo');
+        
+        if (!demoSection || !toggleBtn) {
+            return;
+        }
+
+        // Demo Toggle Button
+        toggleBtn.addEventListener('click', () => {
+            if (demoSection.style.display === 'none') {
+                demoSection.style.display = 'block';
+                toggleBtn.innerHTML = '<i class="fas fa-eye-slash"></i> Demo ausblenden';
+                // Demo initialisieren wenn noch nicht geschehen
+                if (window.TutorView && !demoSection.dataset.initialized) {
+                    window.TutorView.initTutorViewDemo('tutor-view-demo');
+                    demoSection.dataset.initialized = 'true';
+                }
+            } else {
+                demoSection.style.display = 'none';
+                toggleBtn.innerHTML = '<i class="fas fa-eye"></i> Demo anzeigen';
+            }
+        });
+
+        // Dev-Shortcut: ?demo=1 in URL zeigt Demo automatisch
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('demo') === '1') {
+            demoSection.style.display = 'block';
+            toggleBtn.innerHTML = '<i class="fas fa-eye-slash"></i> Demo ausblenden';
+            if (window.TutorView) {
+                window.TutorView.initTutorViewDemo('tutor-view-demo');
+                demoSection.dataset.initialized = 'true';
+            }
+        }
     }
 
     setupEventListeners() {
@@ -168,6 +755,30 @@ class MathTutorAI {
                 // Lade Profil neu, wenn Profil-Tab geöffnet wird
                 if (targetTab === 'user-profile' && this.userProfile) {
                     this.populateProfileForm(this.userProfile);
+                }
+            });
+        });
+    }
+
+    setupSidebarToggle() {
+        const toggleBtn = document.getElementById('sidebar-toggle');
+        const header = document.querySelector('.header');
+
+        if (!toggleBtn || !header) {
+            return;
+        }
+
+        document.body.classList.add('sidebar-open');
+
+        toggleBtn.addEventListener('click', () => {
+            document.body.classList.toggle('sidebar-open');
+        });
+
+        const navLinks = header.querySelectorAll('.nav a');
+        navLinks.forEach(link => {
+            link.addEventListener('click', () => {
+                if (window.innerWidth <= 1024) {
+                    document.body.classList.remove('sidebar-open');
                 }
             });
         });
@@ -348,7 +959,11 @@ class MathTutorAI {
             optimalDelivered: false,
             hilfestellungContent: '',
             correctedContent: '',
-            optimalContent: ''
+            optimalContent: '',
+            // Neue Felder für strukturierte Fehleranalyse
+            attemptNumber: 0,
+            lastStructuredAnalysis: null,
+            useStructuredAnalysis: true // Feature-Flag für die neue Analyse
         };
     }
 
@@ -650,6 +1265,187 @@ ANWEISUNGEN:
    NICHT GELÖST
 5. Verwende keine weiteren Wörter, Satzzeichen, Emojis oder Formatierungen.
 `;
+    }
+
+    /**
+     * Baut den detaillierten Fehleranalyse-Prompt für Stufe 1
+     * @param {Object} options - Optionen für den Prompt
+     * @param {string} options.userSolution - Lösung des Schülers
+     * @param {string} options.drawingInfo - Info über Zeichnungen
+     * @param {boolean} options.hasDrawings - Ob Zeichnungen vorhanden sind
+     * @param {number} options.attemptNumber - Nummer des Lösungsversuchs (1 oder 2+)
+     * @param {Object} options.previousAnalysis - Vorherige Analyse (bei 2. Versuch)
+     * @param {Object} options.studentContext - Schülerkontext (Stärken/Schwächen)
+     * @returns {Object} - { systemPrompt, userPrompt }
+     */
+    buildErrorAnalysisPrompt({ userSolution, drawingInfo, hasDrawings, attemptNumber = 1, previousAnalysis = null, studentContext = null }) {
+        // Dynamische Kontextdaten
+        const taskType = this.currentTaskContext?.topic || 'Mathematik';
+        const taskSubType = this.currentTaskContext?.subTopic || '';
+        const difficulty = this.currentTaskContext?.difficulty || 'mittel';
+        
+        // Stärken und Schwächen aus studentContext
+        let strengthsText = '';
+        let weaknessesText = '';
+        
+        if (studentContext) {
+            if (studentContext.strongAreas && studentContext.strongAreas.topics && studentContext.strongAreas.topics.length > 0) {
+                strengthsText = studentContext.strongAreas.topics
+                    .map(t => `${t.topic} (Level ${t.level}/5)`)
+                    .join(', ');
+            }
+            if (studentContext.weakAreas && studentContext.weakAreas.topics && studentContext.weakAreas.topics.length > 0) {
+                weaknessesText = studentContext.weakAreas.topics
+                    .map(t => `${t.topic} (Level ${t.level}/5)`)
+                    .join(', ');
+            }
+        }
+
+        // Kontext für zweiten Versuch
+        let previousFeedbackSection = '';
+        if (attemptNumber > 1 && previousAnalysis) {
+            previousFeedbackSection = `
+=== VORHERIGER LÖSUNGSVERSUCH ===
+Dies ist der ${attemptNumber}. Lösungsversuch des Schülers.
+Vorherige Analyse (JSON):
+${JSON.stringify(previousAnalysis, null, 2)}
+
+Beachte:
+- Der Schüler hat versucht, seine Fehler zu korrigieren
+- Prüfe ob die vorherigen Fehler behoben wurden
+- Identifiziere neue oder fortbestehende Fehler
+`;
+        }
+
+        // Schülerkontext-Sektion
+        let studentContextSection = '';
+        if (strengthsText || weaknessesText) {
+            studentContextSection = `
+=== SCHÜLERKONTEXT ===
+${strengthsText ? `Stärken: ${strengthsText}` : ''}
+${weaknessesText ? `Schwächen/Lernbedarf: ${weaknessesText}` : ''}
+Aufgabentyp: ${taskType}${taskSubType ? ` > ${taskSubType}` : ''}
+Schwierigkeit: ${difficulty}
+`;
+        }
+
+        const systemPrompt = `Du agierst wie eine empathische, erfahrene Mathelehrerin.
+
+Dein Ziel ist es, Schüler:innen dabei zu unterstützen, ihren eigenen Lösungsweg zu verstehen, Fehler selbst zu erkennen und gezielt zu korrigieren.
+
+Deine Sprache ist präzise, fachlich korrekt und neutral-freundlich.
+
+Lob erfolgt ausschließlich im abschließenden Feedback (nicht in Stufe 1).
+
+Kontext
+Dein Output wird von einem Programm automatisch verarbeitet und als visuelle Korrektur dargestellt.
+Das Frontend erzeugt Farben/Markierungen ausschließlich aus JSON-Feldern (errorType, uiElements.color).
+Deshalb ist ein exakt strukturiertes, sauber geordnetes Ergebnis zwingend.
+
+STUFE 1: Fehlermarkierung (Analyse)
+Führe nur Stufe 1 aus.
+
+Deine Aufgaben
+1. Rechenweg strukturieren
+   - Nimm den Schüler-Rechenweg (roh, evtl. unübersichtlich) und zerlege ihn in nummerierte Teilschritte.
+   - Jeder Teilschritt muss genau eine klare Aussage/Umformung/Rechnung enthalten.
+
+2. Logik prüfen (Priorität 1)
+   - Prüfe, ob der Ansatz logisch nachvollziehbar und langfristig zielführend ist (nicht zwingend effizient).
+   - Markiere die erste logisch nicht zielführende Stelle als errorType: "logic".
+   - Markiere alle folgenden logisch unschlüssigen Schritte ebenfalls als "logic".
+   - Wenn es später im Rechenweg erneut einen neuen Logikfehler gibt (nicht nur Folge des ersten), markiere auch diesen Schritt als "logic".
+
+3. Rechnungen prüfen (Priorität 2)
+   - Prüfe alle Rechnungen auf rechnerische Richtigkeit.
+   - Markiere grobe Rechenfehler (inkl. Vorzeichenfehler) als errorType: "calc".
+   - Rundung: maximal zwei Nachkommastellen; eine Rundungstoleranz von ±10% gilt als korrekt (dann kein Rechenfehler).
+
+4. Folgefehler markieren (Priorität 3)
+   - Wenn ein späterer Schritt nur falsch ist, weil ein früherer Rechenfehler übernommen wurde, markiere ihn als errorType: "followup".
+   - followup heißt: Der Schritt wäre korrekt, wenn der frühere Fehler nicht passiert wäre.
+
+5. Formales nur selten
+   - errorType: "formal" nur verwenden, wenn Logik- und Rechenfehler selten sind.
+   - formal bedeutet: Schreibweise formal unsauber, aber inhaltlich korrekt.
+
+Was du in Stufe 1 NICHT tust
+- Keine Hints (keine 2–3-Wort-Boxen mit „Weiterweg").
+- Keine Erklärungen in ganzen Sätzen.
+- Keine vollständige Musterlösung.
+- Kein motivierendes Feedback.
+
+LaTeX-Formatierung (KRITISCH)
+Die Felder steps[].latex müssen stabil rendbar sein.
+
+Math-Mode immer korrekt und geschlossen:
+- Verwende für jeden mathematischen Ausdruck einheitlich \\( ... \\) (bevorzugt) und niemals offene Delimiter.
+- Jede latex-Zeile muss innerhalb dieses einen Strings vollständig sein.
+
+Keine losen Zeichen:
+- Keine losen Klammern: Jede ( hat ), jede [ hat ], jede { hat }.
+- Keine losen Backslashes: jedes \\ gehört zu einem gültigen LaTeX-Befehl.
+- Brüche immer als \\frac{...}{...} statt /.
+
+Vereinfachen statt riskieren:
+- Wenn eine Darstellung komplex werden würde, nutze einfache Klammern ( ... ).
+
+KEINE Farben in LaTeX:
+- In latex niemals \\textcolor, \\color oder ähnliche Befehle verwenden.
+- Farben kommen ausschließlich über errorType und uiElements.color.
+
+Output-Regeln
+- Du gibst ausschließlich ein JSON-Objekt zurück, das genau dem vorgegebenen Schema entspricht.
+- Keine Einleitung, keine Markdown-Blöcke, keine Kommentare, kein zusätzlicher Text.
+- Keine zusätzlichen Felder außerhalb des Schemas.
+- Reihenfolge: steps in natürlicher Reihenfolge des Schülerwegs (index 1..n).
+- Jeder stepIndex in uiElements muss auf einen existierenden steps[].index verweisen.
+
+Bedeutung der errorType-Werte (Mapping zur Visualisierung)
+- "logic" = rot (Logikfehler / nicht zielführend)
+- "calc" = grün (Rechenfehler)
+- "followup" = orange (Folgefehler)
+- "formal" = hellblau (formal, selten)
+- "none" = korrekt
+
+uiElements in Stufe 1
+- In Stufe 1 ist uiElements normalerweise leer.
+- Wenn du unbedingt UI-Elemente setzen musst, dann nur neutrale Markierungen ohne Hints/Weiterweg, z.B.:
+  - ein info_box mit sehr kurzem Text wie "Logikfehler" oder "Rechenfehler" (keine Lösungsidee).
+
+feedback in Stufe 1
+- feedback ist immer null.
+${studentContextSection}${previousFeedbackSection}`;
+
+        const userPrompt = `Aufgabe:
+${this.currentTask}
+
+Lösung des Schülers (Lösungsversuch ${attemptNumber}):
+${userSolution || '(Keine schriftliche Lösung, nur Zeichnung)'}
+${drawingInfo}
+
+Analysiere den Lösungsweg und gib das Ergebnis als JSON im vorgegebenen Schema zurück.`;
+
+        return { systemPrompt, userPrompt };
+    }
+
+    /**
+     * Holt den Schülerkontext für den Prompt
+     * @returns {Promise<Object|null>}
+     */
+    async getStudentContextForPrompt() {
+        if (!this.userId || !this.dataAggregator) {
+            return null;
+        }
+        
+        try {
+            const topic = this.currentTaskContext?.topic || null;
+            const userContext = await this.dataAggregator.getUserContext(this.userId, topic);
+            return userContext;
+        } catch (error) {
+            console.warn('[MathTutorAI] Could not get student context:', error);
+            return null;
+        }
     }
 
     buildHilfestellungPrompt() {
@@ -1156,28 +1952,50 @@ WICHTIGE RICHTLINIEN:
         } else {
             baseSystemPrompt = `Du bist ein erfahrener Mathematik-Lehrer mit Spezialisierung auf deutsche Schulmathematik.
 
-KRITISCH WICHTIG - LaTeX-Formatierung:
-1. Verwende für INLINE mathematische Ausdrücke: $...$
-   Beispiel: Berechne die Ableitung von $f(x) = x^3 + 2x$.
-2. Verwende für DISPLAY mathematische Ausdrücke: $$...$$
-   Beispiel: $$\\int_{0}^{\\pi} \\sin(x) \\, dx$$
-3. NIEMALS einzelne Symbole wrappen - nur komplette Formeln!
-4. Korrekte LaTeX-Befehle:
-   - Integrale: $\\int_{a}^{b} f(x) \\, dx$
-   - Brüche: $\\frac{a}{b}$
-   - Wurzeln: $\\sqrt{x}$
-   - Potenzen: $x^{2}$
+⚠️ KRITISCH - LaTeX-Formatierung (STRIKTE REGELN):
+
+ERLAUBTE DELIMITER:
+- Inline-Mathe: $...$ (z.B. $f(x) = x^2$)
+- Display-Mathe: $$...$$ (z.B. $$\\int_0^1 x\\,dx$$)
+
+VERBOTENE DELIMITER (NIEMALS VERWENDEN!):
+- NIEMALS \\( oder \\) verwenden!
+- NIEMALS \\[ oder \\] verwenden!
+- NUR $ und $$ sind erlaubt!
+
+WICHTIGE TRENNUNGSREGEL - Text und Mathe getrennt halten:
+- FALSCH: $f(x) = 2x - 3 und g(x) = x^2$
+- RICHTIG: $f(x) = 2x - 3$ und $g(x) = x^2$
+- Deutsche Wörter (und, oder, mit, auf, der, die, das, Berechne, Bestimme, usw.) gehören NIEMALS in $...$!
+- Jede Formel einzeln in $...$ wrappen, Text dazwischen normal schreiben.
+
+BEISPIELE FÜR KORREKTE FORMATIERUNG:
+- "Gegeben sind die Funktionen $f(x) = 2x - 3$ und $g(x) = -x^2 + 4x - 1$."
+- "Berechne $f(-2)$, $f(0)$ und $f(3)$."
+- "Bestimme die Schnittpunkte, indem du $f(x) = g(x)$ löst."
+- "Untersuche, ob der Punkt $P(1|-1)$ auf dem Graphen liegt."
+
+KORREKTE LaTeX-BEFEHLE:
+- Brüche: $\\frac{a}{b}$ (beide {} sind Pflicht!)
+- Wurzeln: $\\sqrt{x}$ (Klammer ist Pflicht!)
+- Potenzen: $x^{2}$ oder $x^{10}$ -> bei mehreren Ziffern: $x^{10}$
+- Integrale: $\\int_{a}^{b} f(x)\\,dx$
 
 WICHTIGE RICHTLINIEN für Aufgaben-Generierung:
 1. Erstelle Aufgaben, die dem deutschen Lehrplan entsprechen
-2. Strukturiere die Aufgabe klar mit einer klaren Aufgabenstellung
+2. Strukturiere die Aufgabe klar mit Teilaufgaben (1., 2., 3., ...)
 3. Berücksichtige das angegebene Schwierigkeitsniveau
 4. Verwende deutsche mathematische Terminologie
-5. Gib KEINE Lösung an - nur die Aufgabenstellung!
 
-WICHTIG: Gib nur die Aufgabenstellung aus, keine Lösung, keine Lösungshinweise, keine Erklärungen. Der Schüler soll die Aufgabe selbst lösen.
+⚠️ STRENG VERBOTEN - Gib unter KEINEN Umständen aus:
+- KEINE Lösung oder Teillösung
+- KEINE Lösungshinweise oder Tipps
+- KEINE Erklärungen zum Lösungsweg
+- KEINE Zwischenschritte oder Ansätze
+- KEIN Endergebnis oder Teilergebnis
+Der Schüler soll die Aufgabe VOLLSTÄNDIG SELBST lösen!
 
-Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern.`;
+Erstelle NUR die Aufgabenstellung - nichts anderes.`;
         }
         
         const shouldPersonalize = type !== 'abi-generate';
@@ -1269,13 +2087,16 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
                 },
                 userMessage
             ],
-            temperature: 0.7
         };
 
         if (this.apiProvider === 'openai') {
-            requestBody.max_completion_tokens = 2000;
+            requestBody.max_completion_tokens = 4000;
+            // Erhöhe den Reasoning-Effort für bessere Aufgabenqualität
+            requestBody.reasoning_effort = 'high';
+            // GPT-5.1 unterstützt nur temperature=1 (Standard)
         } else {
-            requestBody.max_tokens = 2000;
+            requestBody.max_tokens = 4000;
+            requestBody.temperature = 0.7; // Nur für Anthropic
         }
 
         // Anthropic-spezifische Parameter
@@ -1321,17 +2142,227 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
         const data = await response.json();
         console.log('API Response:', data);
         
+        let responseContent;
+        
         if (this.apiProvider === 'openai') {
             if (!data.choices || !data.choices[0] || !data.choices[0].message) {
                 throw new Error('Ungültige API-Antwort: ' + JSON.stringify(data));
             }
-            return data.choices[0].message.content;
+            responseContent = data.choices[0].message.content;
         } else {
             if (!data.content || !data.content[0]) {
                 throw new Error('Ungültige API-Antwort: ' + JSON.stringify(data));
             }
-            return data.content[0].text;
+            responseContent = data.content[0].text;
         }
+        
+        // Wende LaTeX-Sanitierung auf die Antwort an
+        if (typeof sanitizeApiResponse === 'function') {
+            responseContent = sanitizeApiResponse(responseContent);
+            console.log('[MathTutorAI] LaTeX sanitization applied');
+        }
+        
+        return responseContent;
+    }
+
+    /**
+     * Spezialisierter API-Aufruf für die Fehleranalyse mit Structured Outputs
+     * Verwendet OpenAI's json_schema response_format bzw. Anthropic's Tool Use
+     * @param {Object} prompts - { systemPrompt, userPrompt }
+     * @returns {Promise<Object>} - Geparstes TutorResponse JSON
+     */
+    async callErrorAnalysisAPI(prompts) {
+        const { systemPrompt, userPrompt } = prompts;
+        
+        let model;
+        if (this.apiProvider === 'openai') {
+            model = 'gpt-5.1'; // Modell mit Structured Outputs Support
+        } else {
+            model = 'claude-3-5-sonnet-20241022';
+        }
+
+        const userMessage = {
+            role: 'user',
+            content: userPrompt
+        };
+
+        let requestBody;
+        let apiUrl;
+        let headers = {
+            'Content-Type': 'application/json'
+        };
+
+        if (this.apiProvider === 'openai') {
+            // OpenAI mit Structured Outputs (json_schema)
+            apiUrl = 'https://api.openai.com/v1/chat/completions';
+            headers['Authorization'] = `Bearer ${this.apiKey}`;
+            
+            // Füge das JSON-Schema als Teil des System-Prompts hinzu für bessere Kompatibilität
+            const schemaInstructions = `
+
+WICHTIG: Du MUSST deine Antwort als valides JSON-Objekt im folgenden Format ausgeben:
+{
+  "steps": [
+    {
+      "index": 1,
+      "rawText": "Originaltext des Schülers",
+      "latex": "\\\\(LaTeX-Darstellung\\\\)",
+      "errorType": "none|logic|calc|followup|formal"
+    }
+  ],
+  "uiElements": [
+    {
+      "type": "info_box",
+      "stepIndex": 1,
+      "color": "red|green|orange|blue",
+      "title": "Kurzer Titel",
+      "text": "Kurze Beschreibung"
+    }
+  ],
+  "feedback": null
+}
+
+Gib NUR dieses JSON zurück, keine anderen Texte davor oder danach.`;
+            
+            requestBody = {
+                model: model,
+                messages: [
+                    {
+                        role: 'system',
+                        content: systemPrompt + schemaInstructions
+                    },
+                    userMessage
+                ],
+                // GPT-5.1 unterstützt nur temperature=1 (Standard), daher nicht setzen
+                max_completion_tokens: 16000, // Erhöht für komplexere Analysen
+                reasoning_effort: 'high', // Erhöhter Reasoning-Effort für bessere Analyse
+                response_format: {
+                    type: 'json_object' // Einfacheres Format für bessere Kompatibilität
+                }
+            };
+        } else {
+            // Anthropic - Tool Use für strukturierte Ausgabe
+            apiUrl = 'https://api.anthropic.com/v1/messages';
+            headers['x-api-key'] = this.apiKey;
+            headers['anthropic-version'] = '2023-06-01';
+            
+            // Anthropic verwendet Tools statt response_format
+            const toolDefinition = {
+                name: 'submit_error_analysis',
+                description: 'Strukturierte Fehleranalyse des Schüler-Lösungswegs',
+                input_schema: ERROR_ANALYSIS_SCHEMA.schema
+            };
+            
+            requestBody = {
+                model: model,
+                system: systemPrompt,
+                messages: [userMessage],
+                max_tokens: 4000,
+                temperature: 0.3,
+                tools: [toolDefinition],
+                tool_choice: { type: 'tool', name: 'submit_error_analysis' }
+            };
+        }
+
+        console.log('[ErrorAnalysis] Sending API request:', { provider: this.apiProvider, model });
+
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify(requestBody)
+        });
+
+        if (!response.ok) {
+            let errorDetails = '';
+            try {
+                const errorData = await response.json();
+                console.error('[ErrorAnalysis] API Error Details:', errorData);
+                errorDetails = errorData.error?.message || JSON.stringify(errorData);
+            } catch (e) {
+                errorDetails = response.statusText;
+            }
+            throw new Error(`API-Fehler (${response.status}): ${errorDetails}`);
+        }
+
+        const data = await response.json();
+        console.log('[ErrorAnalysis] API Response:', data);
+
+        // Parse die strukturierte Antwort
+        let parsedResponse;
+        
+        if (this.apiProvider === 'openai') {
+            if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+                console.error('[ErrorAnalysis] Invalid response structure:', data);
+                throw new Error('Ungültige API-Antwort: ' + JSON.stringify(data));
+            }
+            
+            const message = data.choices[0].message;
+            const content = message.content;
+            
+            // Debug-Logging für die Antwortstruktur
+            console.log('[ErrorAnalysis] Message object:', message);
+            console.log('[ErrorAnalysis] Content:', content);
+            console.log('[ErrorAnalysis] Finish reason:', data.choices[0].finish_reason);
+            
+            // Prüfe ob die Antwort abgeschnitten wurde
+            if (data.choices[0].finish_reason === 'length') {
+                console.warn('[ErrorAnalysis] Response was truncated due to length limit');
+                throw new Error('Die Analyse wurde abgeschnitten. Bitte versuche es erneut mit einer kürzeren Lösung.');
+            }
+            
+            // Prüfe ob content existiert und nicht leer ist
+            if (!content || content === '' || content === 'null') {
+                console.error('[ErrorAnalysis] Empty or null content received');
+                // Versuche aus refusal oder anderen Feldern Information zu holen
+                if (message.refusal) {
+                    throw new Error('Die KI hat die Analyse verweigert: ' + message.refusal);
+                }
+                throw new Error('Leere Antwort von der KI erhalten. Bitte versuche es erneut.');
+            }
+            
+            try {
+                parsedResponse = JSON.parse(content);
+            } catch (parseError) {
+                console.error('[ErrorAnalysis] JSON Parse Error:', parseError);
+                console.error('[ErrorAnalysis] Raw content that failed to parse:', content);
+                throw new Error('Fehler beim Parsen der Fehleranalyse: ' + parseError.message);
+            }
+        } else {
+            // Anthropic Tool Use Response
+            if (!data.content) {
+                throw new Error('Ungültige API-Antwort: ' + JSON.stringify(data));
+            }
+            
+            // Finde den tool_use Block
+            const toolUseBlock = data.content.find(block => block.type === 'tool_use');
+            if (!toolUseBlock || !toolUseBlock.input) {
+                // Fallback: Versuche Text-Content als JSON zu parsen
+                const textBlock = data.content.find(block => block.type === 'text');
+                if (textBlock) {
+                    try {
+                        parsedResponse = JSON.parse(textBlock.text);
+                    } catch (e) {
+                        throw new Error('Keine strukturierte Antwort erhalten');
+                    }
+                } else {
+                    throw new Error('Keine gültige Antwort erhalten');
+                }
+            } else {
+                parsedResponse = toolUseBlock.input;
+            }
+        }
+
+        // Validiere und sanitiere die Antwort mit TutorModel
+        if (window.TutorModel) {
+            const sanitized = window.TutorModel.createTutorResponse(parsedResponse);
+            if (!sanitized) {
+                console.warn('[ErrorAnalysis] TutorModel sanitization failed, using raw response');
+                return parsedResponse;
+            }
+            return sanitized;
+        }
+
+        return parsedResponse;
     }
 
     displayResults(content, isTask = false) {
@@ -1953,70 +2984,229 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
                 });
                 drawingInfo += '\n(Hinweis: Die Skizzen können derzeit nicht direkt analysiert werden, aber du kannst basierend auf der Beschreibung des Schülers Feedback geben.)';
             }
-            
-            const prompt = this.buildEvaluationPrompt({
-                userSolution,
-                drawingInfo,
-                hasDrawings: canvasImages.length > 0
-            });
-            
-            const response = await this.callAIAPI(prompt, 'analyze', null, this.currentTaskContext?.topic);
-            
-            const STATUS_TOKEN = '__SOLUTION_STATUS:OK__';
-            const success = response.includes(STATUS_TOKEN);
-            const cleanedResponse = success
-                ? response.replace(STATUS_TOKEN, '').trim()
-                : response.trim();
 
-            Object.assign(this.solutionState, {
-                lastUserSolution: userSolution,
-                lastCanvasImages: canvasImages,
-                lastCheckResponse: cleanedResponse,
-                lastWasCorrect: success,
-                hilfestellungEligible: !success && !!userSolution,
-                hilfestellungProvided: false,
-                correctedProvided: false,
-                canRequestOptimal: success,
-                optimalDelivered: false,
-                hilfestellungContent: '',
-                correctedContent: '',
-                optimalContent: ''
-            });
-            
-            // Log Performance
-            if (this.userId && this.performanceTracker && this.currentTaskContext) {
-                await this.performanceTracker.logPerformance(this.userId, {
-                    topic: this.currentTaskContext.topic,
-                    taskType: 'solve',
-                    success: success,
-                    difficulty: this.currentTaskContext.difficulty,
-                    showedSolution: false
+            // Inkrementiere die Versuchsnummer
+            const attemptNumber = (this.solutionState.attemptNumber || 0) + 1;
+            const previousAnalysis = this.solutionState.lastStructuredAnalysis;
+
+            // Hole Schülerkontext für dynamische Prompt-Anpassung
+            const studentContext = await this.getStudentContextForPrompt();
+
+            // Verwende die strukturierte Fehleranalyse
+            if (this.solutionState.useStructuredAnalysis) {
+                const prompts = this.buildErrorAnalysisPrompt({
+                    userSolution,
+                    drawingInfo,
+                    hasDrawings: canvasImages.length > 0,
+                    attemptNumber,
+                    previousAnalysis,
+                    studentContext
+                });
+
+                console.log('[SubmitSolution] Using structured error analysis, attempt:', attemptNumber);
+
+                const structuredResponse = await this.callErrorAnalysisAPI(prompts);
+                
+                // Prüfe ob alle Schritte korrekt sind (keine Fehler)
+                const hasErrors = structuredResponse.steps?.some(step => 
+                    step.errorType && step.errorType !== 'none'
+                );
+                const success = !hasErrors;
+
+                // Speichere den strukturierten State
+                Object.assign(this.solutionState, {
+                    lastUserSolution: userSolution,
+                    lastCanvasImages: canvasImages,
+                    lastCheckResponse: JSON.stringify(structuredResponse, null, 2),
+                    lastWasCorrect: success,
+                    hilfestellungEligible: !success && !!userSolution,
+                    hilfestellungProvided: false,
+                    correctedProvided: false,
+                    canRequestOptimal: success,
+                    optimalDelivered: false,
+                    hilfestellungContent: '',
+                    correctedContent: '',
+                    optimalContent: '',
+                    attemptNumber,
+                    lastStructuredAnalysis: structuredResponse
+                });
+
+                // Log Performance
+                if (this.userId && this.performanceTracker && this.currentTaskContext) {
+                    await this.performanceTracker.logPerformance(this.userId, {
+                        topic: this.currentTaskContext.topic,
+                        taskType: 'solve',
+                        success: success,
+                        difficulty: this.currentTaskContext.difficulty,
+                        showedSolution: false
+                    });
+                    
+                    // Update Competency
+                    if (this.competencyTracker) {
+                        await this.competencyTracker.updateAfterTask(this.userId, this.currentTaskContext.topic, {
+                            success,
+                            timeSpent: this.performanceTracker.currentTaskStart?.timeSpent || 0
+                        });
+                    }
+                    
+                    // Log Behavior
+                    if (this.behaviorTracker) {
+                        await this.behaviorTracker.trackSelfSolveAttempt(this.userId, {
+                            topic: this.currentTaskContext.topic,
+                            success
+                        });
+                    }
+                }
+
+                // Rendere die strukturierte Antwort
+                this.displayStructuredFeedback(structuredResponse, canvasImages, success);
+            } else {
+                // Fallback: Alte Evaluations-Logik
+                const prompt = this.buildEvaluationPrompt({
+                    userSolution,
+                    drawingInfo,
+                    hasDrawings: canvasImages.length > 0
                 });
                 
-                // Update Competency
-                if (this.competencyTracker) {
-                    await this.competencyTracker.updateAfterTask(this.userId, this.currentTaskContext.topic, {
-                        success,
-                        timeSpent: this.performanceTracker.currentTaskStart?.timeSpent || 0
+                const response = await this.callAIAPI(prompt, 'analyze', null, this.currentTaskContext?.topic);
+                
+                const STATUS_TOKEN = '__SOLUTION_STATUS:OK__';
+                const success = response.includes(STATUS_TOKEN);
+                const cleanedResponse = success
+                    ? response.replace(STATUS_TOKEN, '').trim()
+                    : response.trim();
+
+                Object.assign(this.solutionState, {
+                    lastUserSolution: userSolution,
+                    lastCanvasImages: canvasImages,
+                    lastCheckResponse: cleanedResponse,
+                    lastWasCorrect: success,
+                    hilfestellungEligible: !success && !!userSolution,
+                    hilfestellungProvided: false,
+                    correctedProvided: false,
+                    canRequestOptimal: success,
+                    optimalDelivered: false,
+                    hilfestellungContent: '',
+                    correctedContent: '',
+                    optimalContent: '',
+                    attemptNumber
+                });
+                
+                // Log Performance
+                if (this.userId && this.performanceTracker && this.currentTaskContext) {
+                    await this.performanceTracker.logPerformance(this.userId, {
+                        topic: this.currentTaskContext.topic,
+                        taskType: 'solve',
+                        success: success,
+                        difficulty: this.currentTaskContext.difficulty,
+                        showedSolution: false
                     });
+                    
+                    // Update Competency
+                    if (this.competencyTracker) {
+                        await this.competencyTracker.updateAfterTask(this.userId, this.currentTaskContext.topic, {
+                            success,
+                            timeSpent: this.performanceTracker.currentTaskStart?.timeSpent || 0
+                        });
+                    }
+                    
+                    // Log Behavior
+                    if (this.behaviorTracker) {
+                        await this.behaviorTracker.trackSelfSolveAttempt(this.userId, {
+                            topic: this.currentTaskContext.topic,
+                            success
+                        });
+                    }
                 }
                 
-                // Log Behavior
-                if (this.behaviorTracker) {
-                    await this.behaviorTracker.trackSelfSolveAttempt(this.userId, {
-                        topic: this.currentTaskContext.topic,
-                        success
-                    });
-                }
+                this.displayFeedback(cleanedResponse, canvasImages);
             }
             
-            this.displayFeedback(cleanedResponse, canvasImages);
             this.updateSolutionActionButtons();
         } catch (error) {
             console.error('Fehler beim Überprüfen der Lösung:', error);
             this.showNotification('Fehler beim Überprüfen der Lösung: ' + error.message, 'error');
         } finally {
             this.showLoading(false);
+        }
+    }
+
+    /**
+     * Zeigt das strukturierte Feedback aus der Fehleranalyse an
+     * @param {Object} analysis - TutorResponse Objekt
+     * @param {Array} canvasImages - Zeichnungen des Schülers
+     * @param {boolean} success - Ob die Lösung korrekt ist
+     */
+    displayStructuredFeedback(analysis, canvasImages = [], success = false) {
+        const feedbackArea = document.getElementById('feedback-area');
+        const feedbackContent = document.getElementById('feedback-content');
+        
+        if (feedbackArea && feedbackContent) {
+            feedbackContent.innerHTML = '';
+            
+            // Erfolgs- oder Fehler-Header
+            const headerDiv = document.createElement('div');
+            headerDiv.className = success ? 'feedback-header feedback-success' : 'feedback-header feedback-error';
+            headerDiv.innerHTML = success 
+                ? '<i class="fas fa-check-circle"></i> <strong>Richtig!</strong> Dein Lösungsweg ist korrekt.'
+                : `<i class="fas fa-times-circle"></i> <strong>Noch nicht ganz richtig.</strong> Schau dir die Markierungen an (Versuch ${this.solutionState.attemptNumber}).`;
+            feedbackContent.appendChild(headerDiv);
+
+            // Zeichnungen anzeigen falls vorhanden
+            if (canvasImages && canvasImages.length > 0) {
+                const imagesDiv = document.createElement('div');
+                imagesDiv.className = 'feedback-images';
+                imagesDiv.innerHTML = '<h5><i class="fas fa-image"></i> Deine Skizzen:</h5>';
+                const imagesGrid = document.createElement('div');
+                imagesGrid.className = 'feedback-images-grid';
+                canvasImages.forEach(img => {
+                    const imgWrapper = document.createElement('div');
+                    imgWrapper.className = 'feedback-image-wrapper';
+                    imgWrapper.innerHTML = `
+                        <img src="${img.dataUrl}" alt="${img.name}" />
+                        <span class="feedback-image-label">${img.name}</span>
+                    `;
+                    imagesGrid.appendChild(imgWrapper);
+                });
+                imagesDiv.appendChild(imagesGrid);
+                feedbackContent.appendChild(imagesDiv);
+            }
+
+            // TutorView rendern
+            if (window.TutorView && analysis) {
+                const tutorContainer = document.createElement('div');
+                tutorContainer.className = 'tutor-response-wrapper';
+                window.TutorView.renderTutorResponse(tutorContainer, analysis, { 
+                    showFeedback: false, // Stufe 1 hat kein Feedback
+                    showSteps: true 
+                });
+                feedbackContent.appendChild(tutorContainer);
+            } else {
+                // Fallback wenn TutorView nicht geladen ist
+                const fallbackDiv = document.createElement('div');
+                fallbackDiv.className = 'feedback-fallback';
+                fallbackDiv.innerHTML = '<pre>' + JSON.stringify(analysis, null, 2) + '</pre>';
+                feedbackContent.appendChild(fallbackDiv);
+            }
+
+            // Legende für Fehlertypen
+            if (!success) {
+                const legendDiv = document.createElement('div');
+                legendDiv.className = 'error-type-legend';
+                legendDiv.innerHTML = `
+                    <h5><i class="fas fa-palette"></i> Fehlertypen:</h5>
+                    <ul>
+                        <li><span class="legend-color legend-logic"></span> <strong>Rot:</strong> Logikfehler (Ansatz nicht zielführend)</li>
+                        <li><span class="legend-color legend-calc"></span> <strong>Grün:</strong> Rechenfehler</li>
+                        <li><span class="legend-color legend-followup"></span> <strong>Orange:</strong> Folgefehler</li>
+                        <li><span class="legend-color legend-formal"></span> <strong>Hellblau:</strong> Formfehler</li>
+                    </ul>
+                `;
+                feedbackContent.appendChild(legendDiv);
+            }
+            
+            feedbackArea.style.display = 'block';
+            feedbackArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
     }
 
@@ -2286,6 +3476,7 @@ Verwende eine klare Struktur und deutsche mathematische Terminologie.
         const feedbackContent = document.getElementById('feedback-content');
         
         if (feedbackArea && feedbackContent) {
+            // Canvas-Bilder vorbereiten
             let imagesHTML = '';
             if (canvasImages.length > 0) {
                 imagesHTML = '<div class="submitted-drawings"><h5>Deine Zeichnungen:</h5><div class="drawing-previews">';
@@ -2300,42 +3491,83 @@ Verwende eine klare Struktur und deutsche mathematische Terminologie.
                 imagesHTML += '</div></div>';
             }
             
-            feedbackContent.innerHTML = imagesHTML + this.formatResponse(content);
+            // Versuche als strukturiertes TutorResponse zu rendern
+            const renderedStructured = this.tryRenderStructuredResponse(feedbackContent, content);
+            
+            if (renderedStructured) {
+                // Strukturiertes Rendering erfolgreich - Bilder voranstellen falls vorhanden
+                if (imagesHTML) {
+                    feedbackContent.insertAdjacentHTML('afterbegin', imagesHTML);
+                }
+            } else {
+                // Fallback: Plain Text/LaTeX mit bestehender Formatierung
+                feedbackContent.innerHTML = imagesHTML + this.formatResponse(content);
+                // MathJax rendern
+                this.renderMathJax(feedbackContent);
+            }
+            
             feedbackArea.style.display = 'block';
             
             // Scrolle zum Feedback
             feedbackArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            
-            // MathJax rendern
-            this.renderMathJax(feedbackContent);
+        }
+    }
+
+    /**
+     * Versucht Content als strukturiertes TutorResponse zu rendern
+     * @param {HTMLElement} container - Ziel-Container
+     * @param {string|Object} content - API Response (JSON oder Text)
+     * @returns {boolean} - true wenn erfolgreich gerendert
+     */
+    tryRenderStructuredResponse(container, content) {
+        // TutorModel und TutorView müssen geladen sein
+        if (!window.TutorModel || !window.TutorView) {
+            return false;
+        }
+
+        try {
+            // Schnelle Prüfung ob es ein TutorResponse sein könnte
+            if (!window.TutorModel.isTutorResponse(content)) {
+                return false;
+            }
+
+            // Vollständig parsen und sanitieren
+            const response = window.TutorModel.createTutorResponse(content);
+            if (!response || !response.steps || response.steps.length === 0) {
+                return false;
+            }
+
+            // Rendern mit TutorView
+            window.TutorView.renderTutorResponse(container, response);
+            console.log('[MathTutorAI] Rendered structured TutorResponse');
+            return true;
+        } catch (error) {
+            console.warn('[MathTutorAI] Failed to render structured response:', error);
+            return false;
         }
     }
 
     formatResponse(content) {
-        // DEBUG: Erweitere Formatierung für Mathematik-Inhalte mit LaTeX-Unterstützung
         let formattedContent = content;
         
-        console.log('=== DEBUG MATH FORMATTING ===');
-        console.log('1. Original content:', content);
+        // 1. LaTeX-Sanitierung anwenden (korrigiert Klammerfehler etc.)
+        if (typeof sanitizeApiResponse === 'function') {
+            formattedContent = sanitizeApiResponse(formattedContent);
+        }
         
-        // Bereinige den Inhalt vor der Konvertierung
+        // 2. Bereinige den Inhalt vor der Konvertierung
         formattedContent = this.cleanMathContent(formattedContent);
-        console.log('2. After cleaning:', formattedContent);
         
-        // Konvertiere nur explizite mathematische Notationen zu LaTeX
+        // 3. Konvertiere nur explizite mathematische Notationen zu LaTeX
         formattedContent = this.convertMathNotation(formattedContent);
-        console.log('3. After conversion:', formattedContent);
         
-        // Standard-Formatierung
+        // 4. Standard-Formatierung
         formattedContent = formattedContent
             .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
             .replace(/\*(.*?)\*/g, '<em>$1</em>')
             .replace(/\n\n/g, '</p><p>')
             .replace(/\n/g, '<br>')
             .replace(/^(.*)$/, '<p>$1</p>');
-        
-        console.log('4. Final formatted:', formattedContent);
-        console.log('=== END DEBUG ===');
         
         return formattedContent;
     }
@@ -2491,18 +3723,32 @@ Verwende eine klare Struktur und deutsche mathematische Terminologie.
     // User Profile Management
     loadUserProfile() {
         const savedProfile = localStorage.getItem('user_profile');
-        if (savedProfile) {
-            const profile = JSON.parse(savedProfile);
-            this.populateProfileForm(profile);
-            return profile;
+        let profile = savedProfile ? JSON.parse(savedProfile) : this.getDefaultProfile();
+        
+        // Merge mit Backend-Benutzerdaten, falls vorhanden
+        if (window.currentUser) {
+            profile.name = window.currentUser.name || profile.name;
+            profile.email = window.currentUser.email || profile.email;
+            profile.birthDate = window.currentUser.birthDate || profile.birthDate;
+            
+            // Merge profileData und settings aus Backend
+            if (window.currentUser.profileData) {
+                profile = { ...profile, ...window.currentUser.profileData };
+            }
+            if (window.currentUser.settings) {
+                profile.settings = window.currentUser.settings;
+            }
         }
-        return this.getDefaultProfile();
+        
+        this.populateProfileForm(profile);
+        return profile;
     }
 
     getDefaultProfile() {
         return {
             name: '',
             email: '',
+            birthDate: null,
             grade: 'abitur',
             learningGoal: 'abitur-prep',
             weakTopics: [],
@@ -2843,3 +4089,7 @@ if ('serviceWorker' in navigator) {
             });
     });
 }
+
+
+
+

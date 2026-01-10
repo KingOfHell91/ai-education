@@ -18,6 +18,21 @@ class LoginManager {
         this.setupFormListeners();
         this.setupPasswordToggles();
         this.setupPasswordStrength();
+        this.setupBirthDateField();
+    }
+    
+    setupBirthDateField() {
+        // Set maximum date to today (can't be born in the future)
+        const birthDateInput = document.getElementById('register-birthdate');
+        if (birthDateInput) {
+            const today = new Date();
+            const maxDate = today.toISOString().split('T')[0];
+            birthDateInput.setAttribute('max', maxDate);
+            
+            // Set minimum date to 100 years ago
+            const minDate = new Date(today.getFullYear() - 100, today.getMonth(), today.getDate());
+            birthDateInput.setAttribute('min', minDate.toISOString().split('T')[0]);
+        }
     }
     
     async checkExistingSession() {
@@ -215,6 +230,7 @@ class LoginManager {
         const email = document.getElementById('register-email').value.trim();
         const password = document.getElementById('register-password').value;
         const passwordConfirm = document.getElementById('register-password-confirm').value;
+        const birthDate = document.getElementById('register-birthdate').value;
         const acceptTerms = document.getElementById('accept-terms').checked;
         
         // Validation
@@ -238,6 +254,25 @@ class LoginManager {
             return;
         }
         
+        if (!birthDate) {
+            this.showMessage('Bitte gib dein Geburtsdatum ein.', 'error');
+            return;
+        }
+        
+        // Validate age (must be between 5 and 100 years old)
+        const birthDateObj = new Date(birthDate);
+        const today = new Date();
+        let age = today.getFullYear() - birthDateObj.getFullYear();
+        const monthDiff = today.getMonth() - birthDateObj.getMonth();
+        if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDateObj.getDate())) {
+            age--;
+        }
+        
+        if (age < 5 || age > 100) {
+            this.showMessage('Bitte gib ein gültiges Geburtsdatum ein (Alter zwischen 5 und 100 Jahren).', 'error');
+            return;
+        }
+        
         if (!acceptTerms) {
             this.showMessage('Bitte akzeptiere die Nutzungsbedingungen.', 'error');
             return;
@@ -253,13 +288,21 @@ class LoginManager {
         this.showLoading('Registrierung läuft...');
         
         try {
-            const result = await this.authService.signUp(email, password, { name: name });
+            const result = await this.authService.signUp(email, password, { 
+                name: name,
+                birthDate: birthDate
+            });
             
             if (result.success) {
                 this.showMessage(result.message, 'success');
                 
-                // Im Mock-Modus automatisch einloggen
-                if (this.authService.useMock) {
+                // Im Backend-Modus wird der Benutzer automatisch eingeloggt
+                if (result.token) {
+                    setTimeout(() => {
+                        window.location.href = 'index.html';
+                    }, 1000);
+                } else if (this.authService.useMock) {
+                    // Im Mock-Modus automatisch einloggen
                     setTimeout(async () => {
                         try {
                             await this.authService.signIn(email, password, false);

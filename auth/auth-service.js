@@ -1,16 +1,31 @@
 // Authentication Service Layer
-// Abstrahiert zwischen Mock-Auth (lokale Entwicklung) und echtem AWS Cognito
+// Abstrahiert zwischen Mock-Auth (lokale Entwicklung), Backend-API und echtem AWS Cognito
 
 class AuthService {
     constructor() {
         // Lade Konfiguration
         this.config = window.AWS_CONFIG || {};
-        this.useMock = this.config.USE_MOCK !== false; // Default: Mock-Modus
+        
+        // Auth-Modus: 'mock', 'backend', 'production'
+        // Default: 'backend' (lokale SQLite-Datenbank)
+        this.authMode = this.config.AUTH_MODE || 'backend';
+        this.useMock = this.authMode === 'mock';
+        this.useBackend = this.authMode === 'backend';
+        
+        // Backend API URL
+        this.apiBaseUrl = this.config.API_BASE_URL || 'http://localhost:4000';
+        
+        // Session Token Storage
+        this.sessionToken = localStorage.getItem('auth_token') || null;
+        this.currentUser = null;
         
         // Initialisiere entsprechenden Auth-Provider
         if (this.useMock) {
             console.log('[AuthService] Running in MOCK mode');
             this.provider = new window.AuthMock();
+        } else if (this.useBackend) {
+            console.log('[AuthService] Running in BACKEND mode (SQLite)');
+            this.provider = null; // Wir nutzen fetch direkt
         } else {
             console.log('[AuthService] Running in PRODUCTION mode with AWS Cognito');
             this.initializeAmplify();
@@ -47,6 +62,34 @@ class AuthService {
         }
     }
     
+    // ==================== Backend API Helper ====================
+    
+    async _backendFetch(endpoint, options = {}) {
+        const url = `${this.apiBaseUrl}/api/auth${endpoint}`;
+        
+        const headers = {
+            'Content-Type': 'application/json',
+            ...options.headers
+        };
+        
+        if (this.sessionToken) {
+            headers['Authorization'] = `Bearer ${this.sessionToken}`;
+        }
+        
+        const response = await fetch(url, {
+            ...options,
+            headers
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+            throw new Error(data.error || 'API-Fehler');
+        }
+        
+        return data;
+    }
+    
     // ==================== Public API ====================
     
     // User Registration
@@ -56,6 +99,31 @@ class AuthService {
             
             if (this.useMock) {
                 return await this.provider.signUp(email, password, attributes);
+            } else if (this.useBackend) {
+                // Backend API Registration
+                const result = await this._backendFetch('/register', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        email,
+                        password,
+                        name: attributes.name,
+                        birthDate: attributes.birthDate
+                    })
+                });
+                
+                if (result.success && result.token) {
+                    // Store session token
+                    this.sessionToken = result.token;
+                    localStorage.setItem('auth_token', result.token);
+                    this.currentUser = result.user;
+                }
+                
+                return {
+                    success: true,
+                    user: result.user,
+                    token: result.token,
+                    message: 'Registrierung erfolgreich!'
+                };
             } else {
                 // AWS Cognito Sign Up
                 const result = await window.Amplify.Auth.signUp({
@@ -127,6 +195,35 @@ class AuthService {
             let result;
             if (this.useMock) {
                 result = await this.provider.signIn(email, password, rememberMe);
+            } else if (this.useBackend) {
+                // Backend API Login
+                const apiResult = await this._backendFetch('/login', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        email,
+                        password,
+                        rememberMe
+                    })
+                });
+                
+                // Session token is in apiResult.session.token
+                const sessionToken = apiResult.session?.token;
+                if (apiResult.success && sessionToken) {
+                    // Store session token
+                    this.sessionToken = sessionToken;
+                    localStorage.setItem('auth_token', sessionToken);
+                    this.currentUser = apiResult.user;
+                }
+                
+                result = {
+                    success: true,
+                    user: apiResult.user,
+                    session: {
+                        token: sessionToken,
+                        expiresAt: apiResult.session?.expiresAt,
+                        rememberMe: rememberMe
+                    }
+                };
             } else {
                 // AWS Cognito Sign In
                 const cognitoUser = await window.Amplify.Auth.signIn(email, password);
@@ -162,6 +259,21 @@ class AuthService {
             
             if (this.useMock) {
                 await this.provider.signOut();
+            } else if (this.useBackend) {
+                // Backend API Logout
+                try {
+                    await this._backendFetch('/logout', {
+                        method: 'POST'
+                    });
+                } catch (error) {
+                    // Ignore logout errors, clear local state anyway
+                    console.warn('[AuthService] Logout API error (ignored):', error);
+                }
+                
+                // Clear local session
+                this.sessionToken = null;
+                this.currentUser = null;
+                localStorage.removeItem('auth_token');
             } else {
                 await window.Amplify.Auth.signOut();
             }
@@ -181,6 +293,26 @@ class AuthService {
         try {
             if (this.useMock) {
                 return await this.provider.getCurrentUser();
+            } else if (this.useBackend) {
+                // Return cached user if available
+                if (this.currentUser) {
+                    return this.currentUser;
+                }
+                
+                // No token, no user
+                if (!this.sessionToken) {
+                    return null;
+                }
+                
+                // Fetch user from backend
+                const result = await this._backendFetch('/me');
+                
+                if (result.success && result.user) {
+                    this.currentUser = result.user;
+                    return result.user;
+                }
+                
+                return null;
             } else {
                 const cognitoUser = await window.Amplify.Auth.currentAuthenticatedUser();
                 return {
@@ -191,6 +323,12 @@ class AuthService {
             }
         } catch (error) {
             // Kein Fehler loggen wenn User nicht eingeloggt (expected)
+            // Clear invalid session
+            if (this.useBackend) {
+                this.sessionToken = null;
+                this.currentUser = null;
+                localStorage.removeItem('auth_token');
+            }
             return null;
         }
     }
@@ -206,6 +344,13 @@ class AuthService {
         try {
             if (this.useMock) {
                 return await this.provider.validateSession();
+            } else if (this.useBackend) {
+                if (!this.sessionToken) {
+                    return false;
+                }
+                
+                const result = await this._backendFetch('/validate');
+                return result.valid === true;
             } else {
                 const session = await window.Amplify.Auth.currentSession();
                 return session.isValid();
@@ -405,9 +550,14 @@ class AuthService {
     
     // ==================== Utility Methods ====================
     
-    // Get current mode (mock or production)
+    // Get current mode (mock, backend, or production)
     getMode() {
-        return this.useMock ? 'mock' : 'production';
+        return this.authMode;
+    }
+    
+    // Get session token for API calls
+    getSessionToken() {
+        return this.sessionToken;
     }
     
     // Check if email is valid
