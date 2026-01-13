@@ -51,10 +51,53 @@
     <!-- AI Services -->
     <script src="ai/data-aggregator.js"></script>
     <script src="ai/prompt-advisor.js"></script>
+    
+    <!-- Function Plot für Graphen -->
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <script src="https://cdn.jsdelivr.net/npm/function-plot@1/dist/function-plot.min.js"></script>
+    <script src="graph-renderer.js"></script>
+    
+    <!-- Math.js für mathematische Validierung -->
+    <script src="https://cdn.jsdelivr.net/npm/mathjs@12/lib/browser/math.min.js"></script>
+    
+    <!-- Test-Daten für Unit Tests -->
+    <script src="test-data.js"></script>
 </head>
 <body class="sidebar-open">
     <!-- Auth Check Script (muss vor dem Rest laden) -->
     <script>
+        // =====================================================
+        // AUTH TEMPORÄR DEAKTIVIERT - Guest-Modus aktiv
+        // Um Auth wieder zu aktivieren, diesen Block entfernen
+        // und den auskommentierten Block unten aktivieren
+        // =====================================================
+        (function() {
+            console.log('[Auth Check] GUEST MODE - Auth temporarily disabled');
+            
+            // Guest-User für die App
+            window.currentUser = {
+                userId: 'guest_user',
+                email: 'gast@math-tutor.app',
+                name: 'Gast',
+                attributes: { name: 'Gast' }
+            };
+            window.authService = null; // Kein Auth-Service im Guest-Modus
+            
+            // Verstecke User-Info im Header (optional: zeige "Gast")
+            document.addEventListener('DOMContentLoaded', function() {
+                const userInfo = document.getElementById('user-info');
+                const logoutBtn = document.getElementById('logout-btn');
+                
+                // User-Info verstecken oder als Gast anzeigen
+                if (userInfo) {
+                    userInfo.style.display = 'none'; // Verstecken im Guest-Modus
+                }
+            });
+        })();
+        
+        /* =====================================================
+           AUSKOMMENTIERTER AUTH-CHECK - Später wieder aktivieren
+           =====================================================
         // Prüfe Auth-Status beim Laden der Seite
         (async function() {
             try {
@@ -130,6 +173,7 @@
                 window.location.href = 'login.html';
             }
         })();
+        ===================================================== */
     </script>
     <button class="sidebar-toggle" id="sidebar-toggle">
         <i class="fas fa-bars"></i>
@@ -345,6 +389,23 @@
                                 <i class="fas fa-magic"></i>
                                 Aufgabe generieren
                             </button>
+                        </div>
+                        
+                        <!-- Feature Tests Section -->
+                        <div class="test-section">
+                            <h4><i class="fas fa-flask"></i> Feature-Tests</h4>
+                            <p class="test-description">Teste die Fehleranalyse mit vordefinierten Aufgaben und Lösungswegen.</p>
+                            <div class="test-buttons">
+                                <button class="btn btn-secondary" id="run-single-test">
+                                    <i class="fas fa-vial"></i>
+                                    Einzeltest
+                                </button>
+                                <button class="btn btn-secondary" id="run-batch-tests">
+                                    <i class="fas fa-vials"></i>
+                                    Alle Tests
+                                </button>
+                            </div>
+                            <div id="batch-progress"></div>
                         </div>
                     </div>
                 </div>

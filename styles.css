@@ -2823,3 +2823,742 @@ body {
         text-align: center;
     }
 }
+
+/* ==================== Strukturierte Fehleranalyse Styles ==================== */
+
+/* Feedback Status Banner */
+.feedback-status {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-3);
+    padding: var(--spacing-4);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--spacing-6);
+    font-size: var(--font-size-base);
+}
+
+.feedback-status.success {
+    background: rgba(61, 214, 140, 0.15);
+    border: 1px solid rgba(61, 214, 140, 0.4);
+    color: var(--success-color);
+}
+
+.feedback-status.error {
+    background: rgba(230, 57, 70, 0.15);
+    border: 1px solid rgba(230, 57, 70, 0.4);
+    color: var(--error-color);
+}
+
+.feedback-status i {
+    font-size: 1.5rem;
+}
+
+/* Tutor Steps Wrapper */
+.tutor-steps-wrapper {
+    margin-bottom: var(--spacing-6);
+}
+
+.tutor-section-header {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    color: var(--text-primary);
+    font-size: var(--font-size-lg);
+    margin-bottom: var(--spacing-4);
+    padding-bottom: var(--spacing-2);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.tutor-section-header i {
+    color: var(--primary-color);
+}
+
+/* Step List */
+.tutor-step-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-3);
+}
+
+/* Single Step */
+.tutor-step {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-2);
+    padding: var(--spacing-4);
+    background: var(--surface-color);
+    border-radius: var(--radius-md);
+    border-left: 4px solid var(--border-color);
+    transition: all 0.2s ease;
+}
+
+.tutor-step:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+/* Error Type Colors for Steps */
+.tutor-step.step-error-logic {
+    border-left-color: #e53935;
+    background: rgba(229, 57, 53, 0.08);
+}
+
+.tutor-step.step-error-calc {
+    border-left-color: #43a047;
+    background: rgba(67, 160, 71, 0.08);
+}
+
+.tutor-step.step-error-followup {
+    border-left-color: #fb8c00;
+    background: rgba(251, 140, 0, 0.08);
+}
+
+.tutor-step.step-error-formal {
+    border-left-color: #29b6f6;
+    background: rgba(41, 182, 246, 0.08);
+}
+
+/* Step Content Wrapper */
+.tutor-step-content-wrapper {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-3);
+    flex-wrap: wrap;
+}
+
+/* Step Number */
+.tutor-step-num {
+    font-weight: 700;
+    color: var(--text-secondary);
+    min-width: 2rem;
+    font-size: var(--font-size-lg);
+}
+
+/* Step Content */
+.tutor-step-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.tutor-step-latex {
+    font-size: 1.1rem;
+    color: var(--text-primary);
+    word-break: break-word;
+}
+
+.tutor-step-raw {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    font-style: italic;
+    margin-top: var(--spacing-1);
+}
+
+/* Step Operation (Pipe Format) */
+.tutor-step-operation {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.05);
+    padding: var(--spacing-1) var(--spacing-2);
+    border-radius: var(--radius-sm);
+    font-family: 'Fira Code', 'Monaco', monospace;
+    white-space: nowrap;
+}
+
+/* Error Badge */
+.tutor-error-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: var(--spacing-1) var(--spacing-2);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.tutor-error-badge.error-logic {
+    background: rgba(229, 57, 53, 0.2);
+    color: #e53935;
+}
+
+.tutor-error-badge.error-calc {
+    background: rgba(67, 160, 71, 0.2);
+    color: #43a047;
+}
+
+.tutor-error-badge.error-followup {
+    background: rgba(251, 140, 0, 0.2);
+    color: #fb8c00;
+}
+
+.tutor-error-badge.error-formal {
+    background: rgba(41, 182, 246, 0.2);
+    color: #29b6f6;
+}
+
+/* UI Elements */
+.tutor-ui-elements {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-2);
+    margin-top: var(--spacing-4);
+}
+
+.tutor-ui-element {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    padding: var(--spacing-2) var(--spacing-3);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-sm);
+}
+
+.tutor-ui-element.ui-color-red {
+    background: rgba(229, 57, 53, 0.15);
+    border: 1px solid rgba(229, 57, 53, 0.3);
+    color: #e57373;
+}
+
+.tutor-ui-element.ui-color-green {
+    background: rgba(67, 160, 71, 0.15);
+    border: 1px solid rgba(67, 160, 71, 0.3);
+    color: #81c784;
+}
+
+.tutor-ui-element.ui-color-orange {
+    background: rgba(251, 140, 0, 0.15);
+    border: 1px solid rgba(251, 140, 0, 0.3);
+    color: #ffb74d;
+}
+
+.tutor-ui-element.ui-color-blue {
+    background: rgba(41, 182, 246, 0.15);
+    border: 1px solid rgba(41, 182, 246, 0.3);
+    color: #4fc3f7;
+}
+
+/* Error Summary */
+.error-summary {
+    margin-top: var(--spacing-6);
+    padding: var(--spacing-4);
+    background: rgba(230, 57, 70, 0.1);
+    border: 1px solid rgba(230, 57, 70, 0.3);
+    border-radius: var(--radius-md);
+}
+
+.error-summary h5 {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    color: var(--error-color);
+    margin-bottom: var(--spacing-3);
+    font-size: var(--font-size-base);
+}
+
+.error-summary p {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    margin-bottom: var(--spacing-2);
+}
+
+.error-summary .hint {
+    color: var(--text-secondary);
+    font-style: italic;
+    opacity: 0.8;
+}
+
+/* Graph Modal */
+.graph-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
+}
+
+.graph-modal.active {
+    opacity: 1;
+    visibility: visible;
+}
+
+.graph-modal-content {
+    background: var(--surface-color);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-6);
+    max-width: 90%;
+    max-height: 90%;
+    overflow: auto;
+    position: relative;
+}
+
+.graph-modal-close {
+    position: absolute;
+    top: var(--spacing-3);
+    right: var(--spacing-3);
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 1.5rem;
+    cursor: pointer;
+    transition: color 0.2s ease;
+}
+
+.graph-modal-close:hover {
+    color: var(--error-color);
+}
+
+.graph-container {
+    min-width: 400px;
+    min-height: 300px;
+    background: white;
+    border-radius: var(--radius-md);
+}
+
+/* Clickable Formula */
+.clickable-formula {
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border-bottom: 1px dashed var(--primary-color);
+}
+
+.clickable-formula:hover {
+    background: rgba(230, 57, 70, 0.1);
+    border-bottom-style: solid;
+}
+
+/* ==================== Feedback Summary Box ==================== */
+
+.feedback-summary-box {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-3);
+    padding: var(--spacing-4);
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--spacing-4);
+    border-left: 3px solid var(--primary-color);
+}
+
+.feedback-summary-box i {
+    color: var(--primary-color);
+    font-size: 1.2rem;
+    margin-top: 2px;
+}
+
+.feedback-summary-box span {
+    color: var(--text-primary);
+    line-height: 1.5;
+}
+
+/* ==================== Klickbare Steps mit Eingabefeld ==================== */
+
+/* Step wird klickbar wenn Fehler vorhanden */
+.tutor-step.has-error {
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.tutor-step.has-error:hover {
+    transform: translateX(4px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.tutor-step.has-error::after {
+    content: 'Klicken zum Bearbeiten';
+    position: absolute;
+    right: var(--spacing-3);
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.tutor-step.has-error:hover::after {
+    opacity: 1;
+}
+
+/* Step ist expanded (Eingabefeld sichtbar) */
+.tutor-step.expanded {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.tutor-step.expanded::after {
+    display: none;
+}
+
+/* Eingabefeld Container */
+.step-correction-container {
+    display: none;
+    margin-top: var(--spacing-3);
+    padding-top: var(--spacing-3);
+    border-top: 1px solid var(--border-color);
+    animation: slideDown 0.2s ease;
+}
+
+.tutor-step.expanded .step-correction-container {
+    display: block;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.step-correction-label {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-2);
+}
+
+.step-correction-label i {
+    color: var(--accent-color);
+}
+
+.step-correction-input {
+    width: 100%;
+    padding: var(--spacing-3);
+    background: var(--background-color);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: 'Fira Code', 'Monaco', monospace;
+    font-size: var(--font-size-sm);
+    resize: vertical;
+    min-height: 60px;
+    transition: border-color 0.2s ease;
+}
+
+.step-correction-input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.step-correction-input::placeholder {
+    color: var(--text-secondary);
+    opacity: 0.6;
+}
+
+/* Correction Badge */
+.step-has-correction {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-1);
+    padding: 2px var(--spacing-2);
+    background: rgba(61, 214, 140, 0.2);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-xs);
+    color: var(--success-color);
+    margin-left: var(--spacing-2);
+}
+
+.step-has-correction i {
+    font-size: 0.7rem;
+}
+
+/* Hinweis für erneutes Prüfen */
+.correction-hint {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    padding: var(--spacing-3);
+    background: rgba(61, 214, 140, 0.1);
+    border: 1px solid rgba(61, 214, 140, 0.3);
+    border-radius: var(--radius-md);
+    margin-top: var(--spacing-4);
+    font-size: var(--font-size-sm);
+    color: var(--success-color);
+}
+
+.correction-hint i {
+    font-size: 1.2rem;
+}
+
+/* ==================== Test Section Styles ==================== */
+
+.test-section {
+    margin-top: var(--spacing-8);
+    padding-top: var(--spacing-6);
+    border-top: 1px dashed var(--border-color);
+}
+
+.test-section h4 {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    font-size: var(--font-size-lg);
+    color: var(--text-primary);
+    margin-bottom: var(--spacing-2);
+}
+
+.test-section h4 i {
+    color: var(--warning-color);
+}
+
+.test-description {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-4);
+}
+
+.test-buttons {
+    display: flex;
+    gap: var(--spacing-3);
+    flex-wrap: wrap;
+}
+
+.test-buttons .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-2);
+}
+
+/* Batch Progress */
+#batch-progress {
+    margin-top: var(--spacing-4);
+}
+
+.batch-progress-bar {
+    width: 100%;
+    height: 8px;
+    background: var(--surface-color);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+    margin-bottom: var(--spacing-2);
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary-color), var(--accent-color));
+    border-radius: var(--radius-full);
+    transition: width 0.3s ease;
+}
+
+.batch-progress-text {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+
+/* Test Result Header */
+.test-result-header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-4);
+    align-items: center;
+    padding: var(--spacing-4);
+    background: var(--surface-color);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--spacing-4);
+    border-left: 4px solid var(--warning-color);
+}
+
+.test-result-header.test-passed {
+    border-left-color: var(--success-color);
+}
+
+.test-result-header.test-failed {
+    border-left-color: var(--error-color);
+}
+
+.test-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    padding: var(--spacing-2) var(--spacing-3);
+    background: rgba(249, 115, 22, 0.2);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--warning-color);
+}
+
+.test-info {
+    flex: 1;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+.test-status {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    font-weight: 600;
+}
+
+.test-passed .test-status {
+    color: var(--success-color);
+}
+
+.test-failed .test-status {
+    color: var(--error-color);
+}
+
+/* Test Hooks Results */
+.test-hooks-results {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-2);
+    margin-bottom: var(--spacing-4);
+}
+
+.hook-result {
+    padding: var(--spacing-3);
+    background: var(--surface-color);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-sm);
+    border-left: 3px solid var(--border-color);
+}
+
+.hook-result.hook-passed {
+    border-left-color: var(--success-color);
+}
+
+.hook-result.hook-failed {
+    border-left-color: var(--error-color);
+}
+
+.hook-result .error {
+    color: var(--error-color);
+    margin-left: var(--spacing-2);
+}
+
+/* Batch Summary */
+.batch-summary {
+    padding: var(--spacing-4);
+}
+
+.batch-summary h3 {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    font-size: var(--font-size-xl);
+    margin-bottom: var(--spacing-4);
+    color: var(--warning-color);
+}
+
+.batch-stats {
+    display: flex;
+    gap: var(--spacing-4);
+    margin-bottom: var(--spacing-6);
+}
+
+.batch-stats .stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: var(--spacing-4);
+    background: var(--surface-color);
+    border-radius: var(--radius-md);
+    min-width: 100px;
+}
+
+.batch-stats .stat-value {
+    font-size: var(--font-size-3xl);
+    font-weight: 700;
+}
+
+.batch-stats .stat-label {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+
+.batch-stats .stat-total .stat-value {
+    color: var(--text-primary);
+}
+
+.batch-stats .stat-passed .stat-value {
+    color: var(--success-color);
+}
+
+.batch-stats .stat-failed .stat-value {
+    color: var(--error-color);
+}
+
+/* Batch Results List */
+.batch-results-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-2);
+}
+
+.batch-result-item {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-3);
+    padding: var(--spacing-3);
+    background: var(--surface-color);
+    border-radius: var(--radius-sm);
+    border-left: 3px solid var(--border-color);
+}
+
+.batch-result-item.passed {
+    border-left-color: var(--success-color);
+}
+
+.batch-result-item.failed {
+    border-left-color: var(--error-color);
+}
+
+.batch-result-item .result-icon {
+    font-size: var(--font-size-lg);
+}
+
+.batch-result-item.passed .result-icon {
+    color: var(--success-color);
+}
+
+.batch-result-item.failed .result-icon {
+    color: var(--error-color);
+}
+
+.batch-result-item .result-task {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.batch-result-item .result-details {
+    flex: 1;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+
+.batch-result-item .view-details {
+    padding: var(--spacing-2) var(--spacing-3);
+    font-size: var(--font-size-xs);
+}
+
+/* Raw Response */
+.test-raw-response {
+    padding: var(--spacing-4);
+    background: var(--surface-color);
+    border-radius: var(--radius-md);
+    margin-top: var(--spacing-4);
+}
+
+.test-raw-response pre {
+    background: var(--background-color);
+    padding: var(--spacing-4);
+    border-radius: var(--radius-sm);
+    overflow-x: auto;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin-top: var(--spacing-2);
+}

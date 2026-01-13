@@ -10,8 +10,10 @@ const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || '*';
 const PORT = process.env.PORT || 4000;
 
 app.use(cors({
-  origin: CLIENT_ORIGIN === '*' ? CLIENT_ORIGIN : CLIENT_ORIGIN.split(','),
-  credentials: true
+  origin: CLIENT_ORIGIN === '*' ? '*' : CLIENT_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean),
+  // Auth uses Bearer tokens (Authorization header), not cookies.
+  // Enabling credentials with a wildcard origin can break CORS in browsers.
+  credentials: false
 }));
 
 app.use(express.json({ limit: '10mb' }));

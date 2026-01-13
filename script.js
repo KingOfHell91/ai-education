@@ -28,12 +28,16 @@ const ERROR_ANALYSIS_SCHEMA = {
                         },
                         latex: { 
                             type: "string",
-                            description: "Normalisierte LaTeX-Darstellung mit \\( ... \\) Delimitern"
+                            description: "Normalisierte LaTeX-Darstellung OHNE Delimiter (kein \\( \\) oder $ - nur der reine LaTeX-Inhalt)"
                         },
                         errorType: { 
                             type: "string",
                             enum: ["none", "logic", "calc", "followup", "formal"],
                             description: "Fehlertyp: none=korrekt, logic=Logikfehler, calc=Rechenfehler, followup=Folgefehler, formal=Formfehler"
+                        },
+                        operation: {
+                            type: "string",
+                            description: "Rechenoperation die zum NÄCHSTEN Schritt führt, z.B. ':2x' (durch 2x teilen), 'zgf.' (zusammengefasst), '+3', '-5', '·2'. Leer lassen beim letzten Schritt."
                         }
                     },
                     required: ["index", "rawText", "latex", "errorType"],
@@ -74,8 +78,16 @@ const ERROR_ANALYSIS_SCHEMA = {
                 }
             },
             feedback: {
-                type: "null",
-                description: "In Stufe 1 immer null (Feedback nur in späteren Stufen)"
+                type: "object",
+                description: "Kurzes Feedback zur Lösung (1-2 Sätze)",
+                properties: {
+                    summarySentence: {
+                        type: "string",
+                        description: "Kurze Rückmeldung (1-2 Sätze): Was war gut, wo gibt es Probleme - OHNE Details zu verraten"
+                    }
+                },
+                required: ["summarySentence"],
+                additionalProperties: false
             }
         },
         required: ["steps", "uiElements", "feedback"],
@@ -96,7 +108,6 @@ const ERROR_TYPE_COLOR_MAP = {
 
 /**
  * Bekannte LaTeX-Befehle mit ihrer erwarteten Struktur
- * Format: { befehl: { args: anzahl_pflichtargumente, optArgs: anzahl_optionale_argumente } }
  */
 const LATEX_COMMANDS = {
     // Brüche
@@ -105,7 +116,6 @@ const LATEX_COMMANDS = {
     'tfrac': { args: 2, optArgs: 0 },
     // Wurzeln
     'sqrt': { args: 1, optArgs: 1 },
-    // Potenzen und Indizes (werden separat behandelt)
     // Summen und Produkte
     'sum': { args: 0, optArgs: 0, hasLimits: true },
     'prod': { args: 0, optArgs: 0, hasLimits: true },
@@ -124,13 +134,11 @@ const LATEX_COMMANDS = {
     // Klammern
     'left': { args: 0, optArgs: 0, needsPair: 'right' },
     'right': { args: 0, optArgs: 0, needsPair: 'left' },
-    // Trigonometrische Funktionen (keine Argumente in Klammern nötig)
+    // Trigonometrische Funktionen
     'sin': { args: 0, optArgs: 0 },
     'cos': { args: 0, optArgs: 0 },
     'tan': { args: 0, optArgs: 0 },
     'cot': { args: 0, optArgs: 0 },
-    'sec': { args: 0, optArgs: 0 },
-    'csc': { args: 0, optArgs: 0 },
     'arcsin': { args: 0, optArgs: 0 },
     'arccos': { args: 0, optArgs: 0 },
     'arctan': { args: 0, optArgs: 0 },
@@ -151,15 +159,63 @@ const LATEX_COMMANDS = {
     'gamma': { args: 0, optArgs: 0 },
     'delta': { args: 0, optArgs: 0 },
     'pi': { args: 0, optArgs: 0 },
-    'theta': { args: 0, optArgs: 0 },
-    'lambda': { args: 0, optArgs: 0 },
-    'sigma': { args: 0, optArgs: 0 },
-    'omega': { args: 0, optArgs: 0 },
     'neq': { args: 0, optArgs: 0 },
     'leq': { args: 0, optArgs: 0 },
     'geq': { args: 0, optArgs: 0 },
-    'approx': { args: 0, optArgs: 0 }
+    'approx': { args: 0, optArgs: 0 },
+    // Farbbefehle (werden entfernt)
+    'textcolor': { args: 2, optArgs: 0, remove: true },
+    'color': { args: 1, optArgs: 0, remove: true }
 };
+
+/**
+ * Entfernt LaTeX-Delimiter aus einem String
+ * @param {string} latex - LaTeX mit möglichen Delimitern
+ * @returns {string} - Reiner LaTeX-Inhalt ohne Delimiter
+ */
+function stripLatexDelimiters(latex) {
+    if (!latex || typeof latex !== 'string') return latex;
+    
+    let result = latex.trim();
+    
+    // Entferne \( ... \)
+    result = result.replace(/^\\\(|\\\)$/g, '');
+    // Entferne \[ ... \]
+    result = result.replace(/^\\\[|\\\]$/g, '');
+    // Entferne $ ... $ (aber nicht $$)
+    if (result.startsWith('$') && !result.startsWith('$$')) {
+        result = result.slice(1);
+    }
+    if (result.endsWith('$') && !result.endsWith('$$')) {
+        result = result.slice(0, -1);
+    }
+    // Entferne $$ ... $$
+    result = result.replace(/^\$\$|\$\$$/g, '');
+    
+    return result.trim();
+}
+
+/**
+ * Entfernt Color-Befehle aus LaTeX und behält nur den Inhalt
+ * z.B. \textcolor{red}{x+1} -> x+1
+ * z.B. \color{blue} wird komplett entfernt
+ */
+function removeColorCommands(latex) {
+    if (!latex || typeof latex !== 'string') return latex;
+    
+    let result = latex;
+    
+    // Entferne \textcolor{farbe}{inhalt} -> inhalt
+    result = result.replace(/\\textcolor\{[^}]*\}\{([^}]*)\}/g, '$1');
+    
+    // Entferne \color{farbe} komplett
+    result = result.replace(/\\color\{[^}]*\}/g, '');
+    
+    // Entferne auch {\color{farbe} inhalt} -> inhalt
+    result = result.replace(/\{\\color\{[^}]*\}\s*([^}]*)\}/g, '$1');
+    
+    return result;
+}
 
 /**
  * Sanitiert LaTeX-Inhalt und korrigiert häufige Fehler
@@ -173,27 +229,33 @@ function sanitizeLatex(content) {
 
     let sanitized = content;
 
-    // 1. Entferne lose Backslashes (Backslash ohne folgenden Befehl)
+    // 0. Entferne Delimiter falls vorhanden
+    sanitized = stripLatexDelimiters(sanitized);
+    
+    // 1. Entferne Color-Befehle
+    sanitized = removeColorCommands(sanitized);
+
+    // 2. Entferne lose Backslashes (Backslash ohne folgenden Befehl)
     sanitized = sanitized.replace(/\\(?![a-zA-Z{}\[\]()$])/g, '');
 
-    // 2. Korrigiere unbalancierte geschweifte Klammern in bekannten Befehlen
+    // 3. Korrigiere Klammern in bekannten Befehlen
     sanitized = fixBracesInCommands(sanitized);
 
-    // 3. Balanciere allgemeine Klammern
+    // 4. Balanciere allgemeine Klammern
     sanitized = balanceBrackets(sanitized, '{', '}');
     sanitized = balanceBrackets(sanitized, '(', ')');
     sanitized = balanceBrackets(sanitized, '[', ']');
 
-    // 4. Korrigiere \left ohne \right und umgekehrt
+    // 5. Korrigiere \left ohne \right und umgekehrt
     sanitized = fixLeftRightPairs(sanitized);
 
-    // 5. Entferne doppelte Leerzeichen
+    // 6. Entferne doppelte Leerzeichen
     sanitized = sanitized.replace(/  +/g, ' ');
 
-    // 6. Korrigiere häufige Tippfehler
+    // 7. Korrigiere häufige Tippfehler
     sanitized = fixCommonTypos(sanitized);
 
-    return sanitized;
+    return sanitized.trim();
 }
 
 /**
@@ -203,13 +265,10 @@ function fixBracesInCommands(content) {
     let result = content;
 
     // \frac mit fehlenden Klammern korrigieren
-    // Pattern: \frac gefolgt von etwas, das keine vollständigen {}{} hat
     result = result.replace(/\\frac\s*{([^{}]*)}\s*([^{])/g, (match, num, afterNum) => {
-        // Prüfe ob afterNum der Anfang eines Arguments ist oder Text
         if (afterNum === '{') {
-            return match; // Schon korrekt
+            return match;
         }
-        // Versuche ein einzelnes Zeichen als Nenner zu interpretieren
         if (/[a-zA-Z0-9]/.test(afterNum)) {
             return `\\frac{${num}}{${afterNum}}`;
         }
@@ -221,9 +280,6 @@ function fixBracesInCommands(content) {
 
     // \sqrt mit fehlendem Argument
     result = result.replace(/\\sqrt\s+([a-zA-Z0-9])(?![{\[])/g, '\\sqrt{$1}');
-
-    // \sqrt[] mit fehlendem Hauptargument
-    result = result.replace(/\\sqrt\[([^\]]*)\]\s*([a-zA-Z0-9])(?![{])/g, '\\sqrt[$1]{$2}');
 
     // Potenzen: x^10 -> x^{10} (wenn mehr als ein Zeichen)
     result = result.replace(/\^([0-9]{2,})/g, '^{$1}');
@@ -250,19 +306,16 @@ function balanceBrackets(content, openBracket, closeBracket) {
     let openCount = 0;
     let closeCount = 0;
 
-    // Zähle Klammern
     for (const char of result) {
         if (char === openBracket) openCount++;
         if (char === closeBracket) closeCount++;
     }
 
-    // Füge fehlende schließende Klammern am Ende hinzu
     while (closeCount < openCount) {
         result += closeBracket;
         closeCount++;
     }
 
-    // Füge fehlende öffnende Klammern am Anfang hinzu (seltener, aber möglich)
     while (openCount < closeCount) {
         result = openBracket + result;
         openCount++;
@@ -277,21 +330,17 @@ function balanceBrackets(content, openBracket, closeBracket) {
 function fixLeftRightPairs(content) {
     let result = content;
 
-    // Zähle \left und \right
     const leftMatches = result.match(/\\left/g) || [];
     const rightMatches = result.match(/\\right/g) || [];
 
     const leftCount = leftMatches.length;
     const rightCount = rightMatches.length;
 
-    // Füge fehlende \right. am Ende hinzu
     for (let i = rightCount; i < leftCount; i++) {
         result += '\\right.';
     }
 
-    // Füge fehlende \left. am Anfang hinzu
     for (let i = leftCount; i < rightCount; i++) {
-        // Finde die Position des ersten \right und füge \left. davor ein
         const firstRight = result.indexOf('\\right');
         if (firstRight > 0) {
             result = result.slice(0, firstRight) + '\\left.' + result.slice(firstRight);
@@ -309,252 +358,851 @@ function fixLeftRightPairs(content) {
 function fixCommonTypos(content) {
     let result = content;
 
-    // Doppelte Backslashes vor Befehlen (außer bei \\)
+    // Doppelte Backslashes vor Befehlen
     result = result.replace(/\\\\([a-zA-Z])/g, '\\$1');
 
     // Fehlende Leerzeichen nach bestimmten Befehlen
     result = result.replace(/\\(sin|cos|tan|log|ln|lim)([a-zA-Z])/g, '\\$1 $2');
 
-    // Korrigiere / zu \frac wenn in bestimmten Kontexten
-    // (Vorsichtig - nur in offensichtlichen Fällen)
-    // z.B. (a+b)/(c+d) wird nicht automatisch konvertiert, da es mehrdeutig sein kann
-
-    // Leere Klammern entfernen: {} wenn alleinstehend
+    // Leere Klammern entfernen
     result = result.replace(/\{\s*\}/g, '');
 
-    // Doppelte Klammern reduzieren: {{x}} -> {x}
+    // Doppelte Klammern reduzieren
     result = result.replace(/\{\{([^{}]*)\}\}/g, '{$1}');
 
     return result;
 }
 
 /**
- * Korrigiert gemischte und fehlerhafte LaTeX-Delimiter
- * Probleme wie: $...\( oder \)...$ werden zu konsistenten $...$ konvertiert
- * @param {string} content - Der zu korrigierende Inhalt
- * @returns {string} - Korrigierter Inhalt
+ * Sanitiert einen einzelnen Step aus der API-Response
  */
-function fixMixedDelimiters(content) {
-    if (!content || typeof content !== 'string') {
-        return content;
-    }
+function sanitizeStepLatex(step) {
+    if (!step) return step;
+    
+    return {
+        ...step,
+        latex: step.latex ? sanitizeLatex(step.latex) : ''
+    };
+}
 
-    let result = content;
+// ==================== Mathematische Validierung ====================
 
-    // 1. Normalisiere alle Math-Delimiter zu $...$ Format
-    // Konvertiere \( zu $ und \) zu $
-    // Aber nur wenn sie nicht korrekt gepaart sind
+/**
+ * Konvertiert LaTeX in einen auswertbaren mathematischen Ausdruck
+ * @param {string} latex - LaTeX-Ausdruck
+ * @returns {string} - JavaScript/Math.js kompatibler Ausdruck
+ */
+function latexToMathExpression(latex) {
+    if (!latex || typeof latex !== 'string') return null;
     
-    // Zähle die verschiedenen Delimiter
-    const dollarCount = (result.match(/\$/g) || []).length;
-    const openParenCount = (result.match(/\\\(/g) || []).length;
-    const closeParenCount = (result.match(/\\\)/g) || []).length;
+    let expr = latex.trim();
     
-    // Wenn gemischte Delimiter vorhanden sind, normalisiere zu $
-    if ((openParenCount > 0 || closeParenCount > 0) && dollarCount > 0) {
-        // Ersetze alle \( und \) durch $
-        result = result.replace(/\\\(/g, '$');
-        result = result.replace(/\\\)/g, '$');
-    }
+    // Entferne LaTeX-Delimiter
+    expr = stripLatexDelimiters(expr);
     
-    // 2. Korrigiere Fälle wo $ direkt von \( oder \) gefolgt/vorangegangen wird
-    // z.B. "$f(x)\(" -> "$f(x)$"
-    result = result.replace(/\$([^$]*?)\\\(/g, '$$$1$$');
-    result = result.replace(/\\\)([^$]*?)\$/g, '$$$1$$');
+    // Konvertiere LaTeX zu Math.js Format
+    expr = expr
+        // Brüche: \frac{a}{b} -> (a)/(b)
+        .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '(($1)/($2))')
+        // Wurzeln: \sqrt{x} -> sqrt(x)
+        .replace(/\\sqrt\{([^}]+)\}/g, 'sqrt($1)')
+        // n-te Wurzel: \sqrt[n]{x} -> nthRoot(x, n)
+        .replace(/\\sqrt\[([^\]]+)\]\{([^}]+)\}/g, 'nthRoot($2, $1)')
+        // Potenzen: ^{n} -> ^(n)
+        .replace(/\^{([^}]+)}/g, '^($1)')
+        // Multiplikation: \cdot, \times -> *
+        .replace(/\\cdot|\\times/g, '*')
+        // Division: \div -> /
+        .replace(/\\div/g, '/')
+        // Implizite Multiplikation: 2x -> 2*x
+        .replace(/(\d)([a-zA-Z])/g, '$1*$2')
+        // Klammern vor Variablen: )x -> )*x
+        .replace(/\)([a-zA-Z])/g, ')*$1')
+        // Variable vor Klammer: x( -> x*(
+        .replace(/([a-zA-Z])\(/g, '$1*(')
+        // Trigonometrische Funktionen
+        .replace(/\\sin/g, 'sin')
+        .replace(/\\cos/g, 'cos')
+        .replace(/\\tan/g, 'tan')
+        // Logarithmen
+        .replace(/\\ln/g, 'log')
+        .replace(/\\log/g, 'log10')
+        // Konstanten
+        .replace(/\\pi/g, 'pi')
+        .replace(/\\e(?![a-z])/g, 'e')
+        // Entferne verbleibende Backslashes
+        .replace(/\\/g, '')
+        // Entferne geschweifte Klammern
+        .replace(/[{}]/g, '')
+        // Bereinige Leerzeichen
+        .replace(/\s+/g, '')
+        .trim();
     
-    // 3. Korrigiere alleinstehende \( und \) die nicht gepaart sind
-    result = result.replace(/\\\((?![^]*?\\\))/g, '$');
-    result = result.replace(/(?<!\\\()[^]*?\\\)/g, (match) => {
-        // Nur ersetzen wenn kein \( davor
-        if (!match.includes('\\(')) {
-            return match.replace(/\\\)/g, '$');
-        }
-        return match;
-    });
-    
-    // 4. Stelle sicher, dass $ immer paarweise vorkommt
-    // Zähle $ und füge fehlendes hinzu wenn ungerade
-    const finalDollarCount = (result.match(/\$/g) || []).length;
-    if (finalDollarCount % 2 !== 0) {
-        // Finde die letzte ungerade Position und schließe dort
-        let count = 0;
-        let lastOpenIndex = -1;
-        for (let i = 0; i < result.length; i++) {
-            if (result[i] === '$') {
-                count++;
-                if (count % 2 === 1) {
-                    lastOpenIndex = i;
-                }
-            }
-        }
-        // Füge schließendes $ am Ende des Satzes oder Absatzes hinzu
-        if (lastOpenIndex !== -1) {
-            const afterOpen = result.substring(lastOpenIndex + 1);
-            const endOfSentence = afterOpen.search(/[.!?\n]/);
-            if (endOfSentence !== -1) {
-                const insertPos = lastOpenIndex + 1 + endOfSentence;
-                result = result.slice(0, insertPos) + '$' + result.slice(insertPos);
-            } else {
-                result += '$';
-            }
-        }
-    }
-
-    // 5. Entferne leere Math-Blöcke: $$ oder $  $
-    result = result.replace(/\$\s*\$/g, '');
-
-    return result;
+    return expr;
 }
 
 /**
- * Entfernt deutschen Text aus Math-Mode
- * z.B. "$f(x) und g(x)$" -> "$f(x)$ und $g(x)$"
+ * Extrahiert Gleichungsseiten aus einem Ausdruck
+ * @param {string} expr - Mathematischer Ausdruck (z.B. "2x + 3 = 7")
+ * @returns {Object|null} - { left, right } oder null
  */
-function extractTextFromMath(content) {
-    if (!content || typeof content !== 'string') {
-        return content;
-    }
-
-    let result = content;
+function extractEquationSides(expr) {
+    if (!expr || typeof expr !== 'string') return null;
     
-    // Deutsche Wörter die nicht im Math-Mode sein sollten
-    const germanWords = [
-        'und', 'oder', 'mit', 'für', 'von', 'auf', 'dem', 'den', 'der', 'die', 'das',
-        'indem', 'wobei', 'sodass', 'wenn', 'falls', 'ob', 'sowie',
-        'Berechne', 'Bestimme', 'Untersuche', 'Zeige', 'Gegeben', 'Gesucht',
-        'liegt', 'liegen', 'ist', 'sind', 'hat', 'haben',
-        'Graph', 'Graphen', 'Punkt', 'Funktion', 'Gleichung',
-        'auf dem', 'auf der', 'in dem', 'in der'
-    ];
+    // Suche nach = (aber nicht <= oder >= oder !=)
+    const match = expr.match(/^([^=<>!]+)=([^=]+)$/);
+    if (match) {
+        return {
+            left: match[1].trim(),
+            right: match[2].trim()
+        };
+    }
+    return null;
+}
 
-    // Finde Math-Blöcke und prüfe auf deutsche Wörter
-    result = result.replace(/\$([^$]+)\$/g, (match, mathContent) => {
-        let modified = mathContent;
-        let hasGermanWords = false;
+/**
+ * Prüft ob zwei mathematische Ausdrücke äquivalent sind
+ * @param {string} expr1 - Erster Ausdruck
+ * @param {string} expr2 - Zweiter Ausdruck
+ * @param {string} variable - Variable (default: 'x')
+ * @returns {boolean} - true wenn äquivalent
+ */
+function areExpressionsEquivalent(expr1, expr2, variable = 'x') {
+    if (!expr1 || !expr2) return false;
+    if (!window.math) {
+        console.warn('[MathValidator] math.js not loaded');
+        return false;
+    }
+    
+    try {
+        // Teste mit mehreren Werten
+        const testValues = [-2, -1, -0.5, 0, 0.5, 1, 2, 3, 5, 10];
+        let matchCount = 0;
+        let validCount = 0;
         
-        // Prüfe ob deutsche Wörter im Math-Block sind
-        for (const word of germanWords) {
-            const wordPattern = new RegExp(`\\b${word}\\b`, 'gi');
-            if (wordPattern.test(modified)) {
-                hasGermanWords = true;
-                break;
-            }
-        }
-        
-        if (hasGermanWords) {
-            // Teile den Math-Block an deutschen Wörtern auf
-            const parts = [];
-            let currentPart = '';
-            const tokens = modified.split(/(\s+)/);
-            
-            for (const token of tokens) {
-                const isGermanWord = germanWords.some(w => 
-                    new RegExp(`^${w}[,.]?$`, 'i').test(token.trim())
-                );
+        for (const val of testValues) {
+            try {
+                const scope = { [variable]: val };
+                const result1 = window.math.evaluate(expr1, scope);
+                const result2 = window.math.evaluate(expr2, scope);
                 
-                if (isGermanWord) {
-                    if (currentPart.trim()) {
-                        parts.push({ type: 'math', content: currentPart.trim() });
-                    }
-                    parts.push({ type: 'text', content: token });
-                    currentPart = '';
-                } else {
-                    currentPart += token;
+                // Ignoriere NaN, Infinity
+                if (!isFinite(result1) || !isFinite(result2)) continue;
+                
+                validCount++;
+                
+                // Toleranz für Rundungsfehler
+                const tolerance = Math.max(Math.abs(result1), Math.abs(result2)) * 0.0001;
+                if (Math.abs(result1 - result2) <= tolerance + 0.0001) {
+                    matchCount++;
                 }
+            } catch (e) {
+                // Ignoriere Fehler bei einzelnen Werten (z.B. Division durch 0)
             }
-            
-            if (currentPart.trim()) {
-                parts.push({ type: 'math', content: currentPart.trim() });
-            }
-            
-            // Baue den String neu zusammen
-            return parts.map(p => {
-                if (p.type === 'math' && p.content) {
-                    return '$' + p.content + '$';
-                }
-                return p.content;
-            }).join('');
         }
         
-        return match;
-    });
-
-    // Bereinige doppelte $$ die durch die Aufteilung entstanden sein könnten
-    result = result.replace(/\$\s*\$/g, '');
-    result = result.replace(/\$\$/g, (match, offset, string) => {
-        // Prüfe ob es Display-Math ist ($$...$$) oder ein Fehler
-        const before = string.substring(Math.max(0, offset - 2), offset);
-        if (before.endsWith('$')) {
-            return match; // Es ist legitimes $$
-        }
-        return '$ $'; // Füge Leerzeichen ein
-    });
-
-    return result;
+        // Mindestens 3 gültige Tests und alle müssen übereinstimmen
+        return validCount >= 3 && matchCount === validCount;
+    } catch (e) {
+        console.warn('[MathValidator] Evaluation error:', e.message);
+        return false;
+    }
 }
 
 /**
- * Wendet LaTeX-Sanitierung auf API-Antworten an
- * @param {string} response - API-Antwort
- * @returns {string} - Sanitierte Antwort
+ * Prüft ob eine Gleichungsumformung mathematisch korrekt ist
+ * @param {string} step1Latex - Vorheriger Schritt (LaTeX)
+ * @param {string} step2Latex - Aktueller Schritt (LaTeX)
+ * @returns {Object} - { isValid, reason }
  */
-function sanitizeApiResponse(response) {
-    if (!response || typeof response !== 'string') {
-        return response;
+function validateStepTransformation(step1Latex, step2Latex) {
+    if (!step1Latex || !step2Latex) {
+        return { isValid: null, reason: 'Missing step' };
     }
+    
+    const expr1 = latexToMathExpression(step1Latex);
+    const expr2 = latexToMathExpression(step2Latex);
+    
+    if (!expr1 || !expr2) {
+        return { isValid: null, reason: 'Could not parse LaTeX' };
+    }
+    
+    // Fall 1: Beide sind Gleichungen -> prüfe ob die Lösungsmenge gleich ist
+    const eq1 = extractEquationSides(expr1);
+    const eq2 = extractEquationSides(expr2);
+    
+    if (eq1 && eq2) {
+        // Forme beide Gleichungen um zu: left - right = 0
+        const diff1 = `(${eq1.left})-(${eq1.right})`;
+        const diff2 = `(${eq2.left})-(${eq2.right})`;
+        
+        // Prüfe ob die Nullstellen gleich sind (äquivalente Gleichungen)
+        if (areExpressionsEquivalent(diff1, diff2)) {
+            return { isValid: true, reason: 'Equivalent equations' };
+        }
+        
+        // Prüfe auch ob eine skalierte Version ist (z.B. 2x=4 und x=2)
+        // durch Testen ob die Gleichungen für gleiche x-Werte erfüllt sind
+        return { isValid: null, reason: 'Could not verify equivalence' };
+    }
+    
+    // Fall 2: Ausdrücke (keine Gleichungen) -> prüfe direkte Äquivalenz
+    if (!eq1 && !eq2) {
+        const equivalent = areExpressionsEquivalent(expr1, expr2);
+        return { 
+            isValid: equivalent ? true : null, 
+            reason: equivalent ? 'Equivalent expressions' : 'Expressions differ'
+        };
+    }
+    
+    return { isValid: null, reason: 'Mixed equation/expression' };
+}
 
-    let result = response;
+/**
+ * Extrahiert Variablenzuweisungen aus einem Schritt (z.B. "x = 3" -> {x: 3})
+ * @param {string} latex - LaTeX-Ausdruck
+ * @returns {Object|null} - {variable, value} oder null
+ */
+function extractVariableAssignment(latex) {
+    if (!latex || typeof latex !== 'string') return null;
+    
+    const expr = latexToMathExpression(latex);
+    if (!expr) return null;
+    
+    // Prüfe auf einfache Zuweisung: variable = wert
+    // Unterstützt auch Ketten wie "y = 7 - 3 = 4" (nimmt letzten Wert)
+    const parts = expr.split('=');
+    if (parts.length < 2) return null;
+    
+    const variable = parts[0].trim();
+    // Variable muss ein einzelner Buchstabe sein
+    if (!/^[a-zA-Z]$/.test(variable)) return null;
+    
+    // Nimm den letzten Teil als Wert (für Ketten wie "y = 7 - 3 = 4")
+    const valueStr = parts[parts.length - 1].trim();
+    
+    try {
+        const value = window.math.evaluate(valueStr);
+        if (typeof value === 'number' && isFinite(value)) {
+            return { variable, value };
+        }
+    } catch (e) {
+        // Ignoriere Fehler
+    }
+    
+    return null;
+}
 
-    // 0. ZUERST: Korrigiere gemischte Delimiter (wichtigster Schritt!)
-    result = fixMixedDelimiters(result);
+/**
+ * Extrahiert Gleichungen mit zwei Variablen aus den Schritten
+ * @param {Array} steps - Schritte der Analyse
+ * @returns {Array} - Array von {left, right, originalLatex}
+ */
+function extractOriginalEquations(steps) {
+    const equations = [];
+    
+    for (const step of steps) {
+        const latex = step.latex || step.rawText || '';
+        const expr = latexToMathExpression(latex);
+        if (!expr) continue;
+        
+        const eq = extractEquationSides(expr);
+        if (!eq) continue;
+        
+        // Prüfe ob es eine Gleichung mit zwei Variablen ist
+        const fullExpr = eq.left + '+' + eq.right;
+        const hasX = /\bx\b/i.test(fullExpr);
+        const hasY = /\by\b/i.test(fullExpr);
+        
+        if (hasX && hasY) {
+            equations.push({
+                left: eq.left,
+                right: eq.right,
+                originalLatex: latex
+            });
+        }
+    }
+    
+    return equations;
+}
 
-    // 1. Extrahiere deutschen Text aus Math-Blöcken
-    result = extractTextFromMath(result);
+/**
+ * Prüft Rücksubstitution: Ob die gefundenen Variablenwerte die Originalgleichungen erfüllen
+ * @param {Array} steps - Schritte der Analyse
+ * @returns {Object|null} - {stepIndex, expectedValue, actualValue} bei Fehler, sonst null
+ */
+function validateBackSubstitution(steps) {
+    if (!window.math) return null;
+    
+    // Extrahiere Originalgleichungen (mit x und y)
+    const originalEquations = extractOriginalEquations(steps);
+    if (originalEquations.length === 0) return null;
+    
+    // Extrahiere gefundene Variablenwerte
+    const foundValues = {};
+    const stepIndices = {};
+    
+    for (let i = 0; i < steps.length; i++) {
+        const step = steps[i];
+        const latex = step.latex || step.rawText || '';
+        const assignment = extractVariableAssignment(latex);
+        
+        if (assignment) {
+            foundValues[assignment.variable.toLowerCase()] = assignment.value;
+            stepIndices[assignment.variable.toLowerCase()] = step.index || (i + 1);
+        }
+    }
+    
+    // Brauchen mindestens x und y
+    if (!('x' in foundValues) || !('y' in foundValues)) return null;
+    
+    // Prüfe ob die Werte die Originalgleichungen erfüllen
+    for (const eq of originalEquations) {
+        try {
+            const leftValue = window.math.evaluate(eq.left, foundValues);
+            const rightValue = window.math.evaluate(eq.right, foundValues);
+            
+            if (!isFinite(leftValue) || !isFinite(rightValue)) continue;
+            
+            // Toleranz für Rundungsfehler
+            const tolerance = Math.max(Math.abs(leftValue), Math.abs(rightValue)) * 0.01 + 0.01;
+            
+            if (Math.abs(leftValue - rightValue) > tolerance) {
+                console.log(`[MathValidator] Back-substitution check failed:`, {
+                    equation: eq.originalLatex,
+                    foundValues,
+                    leftValue,
+                    rightValue,
+                    difference: Math.abs(leftValue - rightValue)
+                });
+                
+                // Finde den Schritt mit dem falschen y-Wert (häufigster Fehler)
+                // Bei Gleichungssystemen ist es meist der letzte berechnete Wert
+                const lastVarStep = Math.max(stepIndices['x'] || 0, stepIndices['y'] || 0);
+                
+                return {
+                    stepIndex: lastVarStep,
+                    equation: eq.originalLatex,
+                    foundValues,
+                    leftValue,
+                    rightValue
+                };
+            }
+        } catch (e) {
+            // Ignoriere Fehler bei der Evaluation
+        }
+    }
+    
+    return null;
+}
 
-    // 2. Display-Math: $$...$$
-    result = result.replace(/\$\$([\s\S]*?)\$\$/g, (match, latex) => {
-        return '$$' + sanitizeLatex(latex) + '$$';
-    });
-
-    // 3. Inline-Math: $...$
-    result = result.replace(/\$([^\$]+)\$/g, (match, latex) => {
-        return '$' + sanitizeLatex(latex) + '$';
-    });
-
-    // MathJax Display: \[...\]
-    result = result.replace(/\\\[([\s\S]*?)\\\]/g, (match, latex) => {
-        return '\\[' + sanitizeLatex(latex) + '\\]';
-    });
-
-    // MathJax Inline: \(...\)
-    result = result.replace(/\\\(([\s\S]*?)\\\)/g, (match, latex) => {
-        return '\\(' + sanitizeLatex(latex) + '\\)';
-    });
-
-    return result;
+/**
+ * Validiert die Fehlermarkierungen in einer Analyse
+ * Entfernt falsche Fehlermarkierungen wenn der Schritt mathematisch korrekt ist
+ * Fügt fehlende Fehlermarkierungen hinzu bei Rücksubstitutionsfehlern
+ * @param {Object} analysis - Die Analyse mit steps
+ * @returns {Object} - Die korrigierte Analyse
+ */
+function validateErrorMarkings(analysis) {
+    if (!analysis || !analysis.steps || analysis.steps.length < 2) {
+        return analysis;
+    }
+    
+    if (!window.math) {
+        console.warn('[MathValidator] math.js not loaded, skipping validation');
+        return analysis;
+    }
+    
+    const correctedSteps = [...analysis.steps];
+    let correctionsMade = 0;
+    let errorsAdded = 0;
+    
+    // Phase 1: Entferne falsche Fehlermarkierungen
+    for (let i = 1; i < correctedSteps.length; i++) {
+        const currentStep = correctedSteps[i];
+        const previousStep = correctedSteps[i - 1];
+        
+        // Nur prüfen wenn als Fehler markiert (außer Folgefehler)
+        if (currentStep.errorType && currentStep.errorType !== 'none' && currentStep.errorType !== 'followup') {
+            const validation = validateStepTransformation(previousStep.latex, currentStep.latex);
+            
+            if (validation.isValid === true) {
+                console.log(`[MathValidator] Step ${i + 1} marked as ${currentStep.errorType} but is mathematically correct. Removing error marking.`);
+                correctedSteps[i] = {
+                    ...currentStep,
+                    errorType: 'none',
+                    _validationNote: `Originally marked as ${currentStep.errorType}, but validated as correct`
+                };
+                correctionsMade++;
+            }
+        }
+    }
+    
+    // Phase 2: Prüfe auf fehlende Fehler bei Rücksubstitution
+    const hasErrors = correctedSteps.some(s => s.errorType && s.errorType !== 'none');
+    
+    if (!hasErrors) {
+        const backSubError = validateBackSubstitution(correctedSteps);
+        
+        if (backSubError) {
+            // Finde den Schritt und markiere ihn als Rechenfehler
+            const stepArrayIndex = correctedSteps.findIndex(s => 
+                (s.index || 0) === backSubError.stepIndex
+            );
+            
+            if (stepArrayIndex >= 0) {
+                console.log(`[MathValidator] Back-substitution error detected at step ${backSubError.stepIndex}:`, backSubError);
+                correctedSteps[stepArrayIndex] = {
+                    ...correctedSteps[stepArrayIndex],
+                    errorType: 'calc',
+                    _validationNote: `Back-substitution check failed: ${backSubError.equation} not satisfied with x=${backSubError.foundValues.x}, y=${backSubError.foundValues.y}`
+                };
+                errorsAdded++;
+                
+                // Update Feedback
+                if (analysis.feedback) {
+                    analysis.feedback.summarySentence = 'Bei der Rücksubstitution ist ein Rechenfehler aufgetreten.';
+                }
+            }
+        }
+    }
+    
+    if (correctionsMade > 0) {
+        console.log(`[MathValidator] Corrected ${correctionsMade} false error marking(s)`);
+        
+        // Update Feedback wenn alle Fehler entfernt wurden
+        const hasRemainingErrors = correctedSteps.some(s => s.errorType && s.errorType !== 'none');
+        if (!hasRemainingErrors && analysis.feedback) {
+            analysis.feedback.summarySentence = 'Nach Validierung: Alle Schritte sind mathematisch korrekt!';
+        }
+    }
+    
+    if (errorsAdded > 0) {
+        console.log(`[MathValidator] Added ${errorsAdded} missing error marking(s)`);
+    }
+    
+    return {
+        ...analysis,
+        steps: correctedSteps,
+        _validationApplied: true,
+        _correctionsMade: correctionsMade,
+        _errorsAdded: errorsAdded
+    };
 }
 
 // Exportiere für globalen Zugriff
 if (typeof window !== 'undefined') {
-    window.LaTeXSanitizer = {
+    window.LatexSanitizer = {
         sanitizeLatex,
-        sanitizeApiResponse,
-        fixBracesInCommands,
-        balanceBrackets,
-        fixLeftRightPairs,
-        fixCommonTypos,
-        fixMixedDelimiters,
-        extractTextFromMath,
+        stripLatexDelimiters,
+        removeColorCommands,
+        sanitizeStepLatex,
         LATEX_COMMANDS
     };
+    
+    window.MathValidator = {
+        latexToMathExpression,
+        extractEquationSides,
+        areExpressionsEquivalent,
+        validateStepTransformation,
+        validateErrorMarkings,
+        extractVariableAssignment,
+        extractOriginalEquations,
+        validateBackSubstitution
+    };
+}
+
+// ==================== Main Class ====================
+
+// ==================== TestManager für Unit Tests ====================
+
+/**
+ * TestManager - Verwaltet Unit Tests für die Fehleranalyse-Funktionalität
+ * Ermöglicht das Testen von Features ohne manuelle Aufgabenlösung
+ */
+class TestManager {
+    constructor(tutorInstance) {
+        this.tutor = tutorInstance;
+        this.testHooks = new Map();
+        this.batchResults = [];
+        this.isRunning = false;
+        
+        // Standard-Hooks registrieren
+        this.registerDefaultHooks();
+    }
+    
+    /**
+     * Registriert Standard-Test-Hooks
+     */
+    registerDefaultHooks() {
+        // Basis-Validierung der Analyse
+        this.registerTestHook('analysis_validation', async (task, solution, analysis) => {
+            if (!window.TestData) return { passed: false, error: 'TestData nicht geladen' };
+            
+            const validation = window.TestData.validateAnalysisResult(
+                analysis, 
+                solution.expectedErrors
+            );
+            return validation;
+        });
+        
+        // Feedback-Check
+        this.registerTestHook('feedback_check', async (task, solution, analysis) => {
+            const hasFeedback = analysis?.feedback?.summarySentence?.length > 0;
+            return {
+                passed: hasFeedback,
+                details: hasFeedback 
+                    ? `Feedback: "${analysis.feedback.summarySentence}"`
+                    : 'Kein Feedback erhalten'
+            };
+        });
+    }
+    
+    /**
+     * Registriert einen neuen Test-Hook für Erweiterbarkeit
+     * @param {string} name - Name des Hooks
+     * @param {Function} fn - Async Funktion (task, solution, analysis) => { passed, details }
+     */
+    registerTestHook(name, fn) {
+        this.testHooks.set(name, fn);
+        console.log(`[TestManager] Hook registriert: ${name}`);
+    }
+    
+    /**
+     * Entfernt einen Test-Hook
+     * @param {string} name - Name des Hooks
+     */
+    unregisterTestHook(name) {
+        this.testHooks.delete(name);
+    }
+    
+    /**
+     * Führt einen einzelnen Test mit zufälliger Aufgabe aus
+     * @param {boolean} forceIncorrect - null=zufällig, true=fehlerhaft, false=korrekt
+     * @returns {Promise<Object>} Test-Ergebnis
+     */
+    async runSingleTest(forceIncorrect = null) {
+        if (this.isRunning) {
+            console.warn('[TestManager] Test läuft bereits');
+            return null;
+        }
+        
+        if (!window.TestData) {
+            this.tutor.showNotification('Test-Daten nicht geladen. Bitte test-data.js einbinden.', 'error');
+            return null;
+        }
+        
+        if (!this.tutor.apiKey) {
+            this.tutor.showNotification('API-Schlüssel fehlt. Bitte im Profil konfigurieren.', 'warning');
+            return null;
+        }
+        
+        this.isRunning = true;
+        this.tutor.showLoading(true);
+        
+        try {
+            // Zufällige Aufgabe und Lösung wählen
+            const task = window.TestData.getRandomTestTask();
+            const solution = window.TestData.getRandomSolution(task, forceIncorrect);
+            
+            console.log('[TestManager] Starte Test:', {
+                taskId: task.id,
+                isCorrect: solution.isCorrect,
+                expectedErrors: solution.expectedErrors
+            });
+            
+            // Aufgabe in den Tutor laden
+            this.tutor.currentTask = task.task;
+            this.tutor.solutionState = this.tutor.getDefaultSolutionState();
+            this.tutor.stepCorrections = {};
+            
+            // Fehleranalyse durchführen
+            const prompts = this.tutor.buildErrorAnalysisPrompt({
+                userSolution: solution.solution,
+                drawingInfo: '',
+                hasDrawings: false,
+                attemptNumber: 1
+            });
+            
+            const analysis = await this.tutor.callErrorAnalysisAPI(prompts);
+            
+            // Test-Hooks ausführen
+            const hookResults = await this.runTestHooks(task, solution, analysis);
+            
+            // Ergebnis zusammenstellen
+            const result = {
+                task: task,
+                solution: solution,
+                analysis: analysis,
+                hookResults: hookResults,
+                timestamp: new Date().toISOString(),
+                allPassed: hookResults.every(h => h.passed)
+            };
+            
+            // Ergebnis anzeigen
+            this.displayTestResult(result);
+            
+            return result;
+            
+        } catch (error) {
+            console.error('[TestManager] Test-Fehler:', error);
+            this.tutor.showNotification(`Test-Fehler: ${error.message}`, 'error');
+            return { error: error.message };
+        } finally {
+            this.isRunning = false;
+            this.tutor.showLoading(false);
+        }
+    }
+    
+    /**
+     * Führt alle Tests im Batch-Modus aus
+     * @returns {Promise<Array>} Array mit allen Ergebnissen
+     */
+    async runBatchTests() {
+        if (this.isRunning) {
+            console.warn('[TestManager] Test läuft bereits');
+            return null;
+        }
+        
+        if (!window.TestData) {
+            this.tutor.showNotification('Test-Daten nicht geladen.', 'error');
+            return null;
+        }
+        
+        if (!this.tutor.apiKey) {
+            this.tutor.showNotification('API-Schlüssel fehlt.', 'warning');
+            return null;
+        }
+        
+        this.isRunning = true;
+        this.batchResults = [];
+        
+        const allTasks = window.TestData.getAllTestTasks();
+        const progressEl = document.getElementById('batch-progress');
+        
+        try {
+            for (let i = 0; i < allTasks.length; i++) {
+                const task = allTasks[i];
+                
+                // Fortschritt anzeigen
+                if (progressEl) {
+                    progressEl.innerHTML = `
+                        <div class="batch-progress-bar">
+                            <div class="progress-fill" style="width: ${((i + 1) / allTasks.length) * 100}%"></div>
+                        </div>
+                        <div class="batch-progress-text">
+                            Test ${i + 1}/${allTasks.length}: ${task.id}
+                        </div>
+                    `;
+                }
+                
+                // Teste mit fehlerhafter Lösung (interessanter für Fehleranalyse)
+                const solution = window.TestData.getRandomSolution(task, true);
+                
+                console.log(`[TestManager] Batch ${i + 1}/${allTasks.length}: ${task.id}`);
+                
+                this.tutor.currentTask = task.task;
+                this.tutor.solutionState = this.tutor.getDefaultSolutionState();
+                
+                const prompts = this.tutor.buildErrorAnalysisPrompt({
+                    userSolution: solution.solution,
+                    drawingInfo: '',
+                    hasDrawings: false,
+                    attemptNumber: 1
+                });
+                
+                const analysis = await this.tutor.callErrorAnalysisAPI(prompts);
+                const hookResults = await this.runTestHooks(task, solution, analysis);
+                
+                const result = {
+                    task: task,
+                    solution: solution,
+                    analysis: analysis,
+                    hookResults: hookResults,
+                    timestamp: new Date().toISOString(),
+                    allPassed: hookResults.every(h => h.passed)
+                };
+                
+                this.batchResults.push(result);
+                
+                // Kurze Pause zwischen Tests um Rate-Limits zu vermeiden
+                if (i < allTasks.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
+            
+            // Batch-Zusammenfassung anzeigen
+            this.displayBatchSummary();
+            
+            return this.batchResults;
+            
+        } catch (error) {
+            console.error('[TestManager] Batch-Fehler:', error);
+            this.tutor.showNotification(`Batch-Fehler: ${error.message}`, 'error');
+            return this.batchResults;
+        } finally {
+            this.isRunning = false;
+            if (progressEl) {
+                progressEl.innerHTML = '';
+            }
+        }
+    }
+    
+    /**
+     * Führt alle registrierten Test-Hooks aus
+     */
+    async runTestHooks(task, solution, analysis) {
+        const results = [];
+        
+        for (const [name, fn] of this.testHooks) {
+            try {
+                const result = await fn(task, solution, analysis);
+                results.push({
+                    hook: name,
+                    ...result
+                });
+            } catch (error) {
+                results.push({
+                    hook: name,
+                    passed: false,
+                    error: error.message
+                });
+            }
+        }
+        
+        return results;
+    }
+    
+    /**
+     * Zeigt das Test-Ergebnis im normalen Ergebnis-Bereich an
+     */
+    displayTestResult(result) {
+        const resultsSection = document.getElementById('results-section');
+        const resultsContent = document.getElementById('results-content');
+        
+        if (!resultsSection || !resultsContent) return;
+        
+        // Test-Info Header erstellen
+        const testInfoHtml = `
+            <div class="test-result-header ${result.allPassed ? 'test-passed' : 'test-failed'}">
+                <div class="test-badge">
+                    <i class="fas fa-flask"></i> TEST-MODUS
+                </div>
+                <div class="test-info">
+                    <strong>Aufgabe:</strong> ${result.task.id} (${result.task.topic})
+                    <br>
+                    <strong>Lösungsweg:</strong> ${result.solution.isCorrect ? 'Korrekt' : 'Mit Fehlern'}
+                    ${!result.solution.isCorrect ? `<br><strong>Erwartete Fehler:</strong> ${result.solution.expectedErrors.map(e => `Schritt ${e.step}: ${e.type}`).join(', ')}` : ''}
+                </div>
+                <div class="test-status">
+                    ${result.allPassed 
+                        ? '<i class="fas fa-check-circle"></i> Alle Tests bestanden' 
+                        : '<i class="fas fa-times-circle"></i> Tests fehlgeschlagen'}
+                </div>
+            </div>
+            <div class="test-hooks-results">
+                ${result.hookResults.map(h => `
+                    <div class="hook-result ${h.passed ? 'hook-passed' : 'hook-failed'}">
+                        <strong>${h.hook}:</strong> 
+                        ${h.passed ? '✓' : '✗'} 
+                        ${h.details ? (typeof h.details === 'string' ? h.details : JSON.stringify(h.details)) : ''}
+                        ${h.error ? `<span class="error">${h.error}</span>` : ''}
+                    </div>
+                `).join('')}
+            </div>
+        `;
+        
+        // Falls eine strukturierte Analyse vorhanden ist, diese auch anzeigen
+        if (result.analysis && result.analysis.steps) {
+            // Nutze die vorhandene displayStructuredFeedback Funktion
+            this.tutor.displayStructuredFeedback(result.analysis);
+            
+            // Test-Info oben einfügen
+            const existingContent = resultsContent.innerHTML;
+            resultsContent.innerHTML = testInfoHtml + existingContent;
+        } else {
+            resultsContent.innerHTML = testInfoHtml + `
+                <div class="test-raw-response">
+                    <strong>Rohe Antwort:</strong>
+                    <pre>${JSON.stringify(result.analysis, null, 2)}</pre>
+                </div>
+            `;
+        }
+        
+        resultsSection.style.display = 'block';
+        resultsSection.scrollIntoView({ behavior: 'smooth' });
+    }
+    
+    /**
+     * Zeigt die Batch-Zusammenfassung an
+     */
+    displayBatchSummary() {
+        const resultsSection = document.getElementById('results-section');
+        const resultsContent = document.getElementById('results-content');
+        
+        if (!resultsSection || !resultsContent) return;
+        
+        const passed = this.batchResults.filter(r => r.allPassed).length;
+        const failed = this.batchResults.length - passed;
+        
+        let summaryHtml = `
+            <div class="batch-summary">
+                <h3><i class="fas fa-flask"></i> Batch-Test Zusammenfassung</h3>
+                <div class="batch-stats">
+                    <div class="stat stat-total">
+                        <span class="stat-value">${this.batchResults.length}</span>
+                        <span class="stat-label">Gesamt</span>
+                    </div>
+                    <div class="stat stat-passed">
+                        <span class="stat-value">${passed}</span>
+                        <span class="stat-label">Bestanden</span>
+                    </div>
+                    <div class="stat stat-failed">
+                        <span class="stat-value">${failed}</span>
+                        <span class="stat-label">Fehlgeschlagen</span>
+                    </div>
+                </div>
+                <div class="batch-results-list">
+                    ${this.batchResults.map((r, i) => `
+                        <div class="batch-result-item ${r.allPassed ? 'passed' : 'failed'}" data-index="${i}">
+                            <span class="result-icon">${r.allPassed ? '✓' : '✗'}</span>
+                            <span class="result-task">${r.task.id}</span>
+                            <span class="result-details">
+                                ${r.hookResults.filter(h => !h.passed).length > 0 
+                                    ? `${r.hookResults.filter(h => !h.passed).length} Hook(s) fehlgeschlagen` 
+                                    : 'Alle Hooks bestanden'}
+                            </span>
+                            <button class="btn btn-sm btn-secondary view-details" onclick="window.testManager?.showBatchResultDetails(${i})">
+                                Details
+                            </button>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+        
+        resultsContent.innerHTML = summaryHtml;
+        resultsSection.style.display = 'block';
+        resultsSection.scrollIntoView({ behavior: 'smooth' });
+    }
+    
+    /**
+     * Zeigt Details eines einzelnen Batch-Ergebnisses
+     */
+    showBatchResultDetails(index) {
+        if (index >= 0 && index < this.batchResults.length) {
+            this.displayTestResult(this.batchResults[index]);
+        }
+    }
 }
 
 class MathTutorAI {
     constructor() {
-        // Auth Service
-        this.authService = new AuthService();
-        this.currentUser = null;
-        this.userId = null;
+        // Auth Service (deaktiviert im Guest-Modus)
+        // GUEST-MODUS: AuthService nur erstellen wenn nicht im Guest-Modus
+        this.authService = window.authService || null; // null im Guest-Modus
+        this.currentUser = window.currentUser || null;
+        this.userId = window.currentUser?.userId || null;
         
         // Legacy API Keys (für Backward-Compatibility)
         this.apiKey = localStorage.getItem('openai_api_key') || '';
@@ -564,8 +1212,13 @@ class MathTutorAI {
         this.abiTasks = [];
         this.currentAbiSource = null;
         this.solutionState = this.getDefaultSolutionState();
+        this.stepCorrections = {};  // User-Korrekturen für einzelne Schritte
         const origin = window.location.origin && window.location.origin.startsWith('http') ? window.location.origin : 'http://localhost:4000';
         this.backendApiBase = (window.APP_CONFIG && window.APP_CONFIG.BACKEND_URL) || origin.replace(/\/$/, '');
+        
+        // TestManager für Unit Tests
+        this.testManager = new TestManager(this);
+        window.testManager = this.testManager; // Global für Button-Callbacks
         
         // Initialisiere mit Auth-Check
         this.initWithAuth();
@@ -573,6 +1226,22 @@ class MathTutorAI {
     
     async initWithAuth() {
         try {
+            // =====================================================
+            // GUEST-MODUS: Nutze window.currentUser wenn vorhanden
+            // =====================================================
+            if (window.currentUser && !window.authService) {
+                // Guest-Modus aktiv
+                this.currentUser = window.currentUser;
+                this.userId = this.currentUser.userId || 'guest_user';
+                if (this.userProfile) {
+                    this.userProfile.email = this.currentUser.email;
+                }
+                console.log('[MathTutorAI] GUEST MODE - Initialized with guest user:', this.userId);
+                this.init();
+                return;
+            }
+            
+            /* AUSKOMMENTIERT - Auth-basierte Initialisierung
             // Hole aktuellen User
             this.currentUser = await this.authService.getCurrentUser();
             if (this.currentUser) {
@@ -587,6 +1256,7 @@ class MathTutorAI {
             } else {
                 console.warn('[MathTutorAI] No authenticated user');
             }
+            */
             
             // Reguläre Initialisierung
             this.init();
@@ -627,45 +1297,7 @@ class MathTutorAI {
         this.setupImageUpload();
         this.setupAbiAdminForm();
         this.setupAbiGenerator();
-        this.setupSidebarToggle();
-        this.setupTutorViewDemo();
         // API-Konfiguration wird jetzt im Profil-Tab verwaltet
-    }
-
-    setupTutorViewDemo() {
-        const demoSection = document.getElementById('tutor-view-demo-section');
-        const toggleBtn = document.getElementById('toggle-tutor-demo');
-        
-        if (!demoSection || !toggleBtn) {
-            return;
-        }
-
-        // Demo Toggle Button
-        toggleBtn.addEventListener('click', () => {
-            if (demoSection.style.display === 'none') {
-                demoSection.style.display = 'block';
-                toggleBtn.innerHTML = '<i class="fas fa-eye-slash"></i> Demo ausblenden';
-                // Demo initialisieren wenn noch nicht geschehen
-                if (window.TutorView && !demoSection.dataset.initialized) {
-                    window.TutorView.initTutorViewDemo('tutor-view-demo');
-                    demoSection.dataset.initialized = 'true';
-                }
-            } else {
-                demoSection.style.display = 'none';
-                toggleBtn.innerHTML = '<i class="fas fa-eye"></i> Demo anzeigen';
-            }
-        });
-
-        // Dev-Shortcut: ?demo=1 in URL zeigt Demo automatisch
-        const urlParams = new URLSearchParams(window.location.search);
-        if (urlParams.get('demo') === '1') {
-            demoSection.style.display = 'block';
-            toggleBtn.innerHTML = '<i class="fas fa-eye-slash"></i> Demo ausblenden';
-            if (window.TutorView) {
-                window.TutorView.initTutorViewDemo('tutor-view-demo');
-                demoSection.dataset.initialized = 'true';
-            }
-        }
     }
 
     setupEventListeners() {
@@ -688,6 +1320,21 @@ class MathTutorAI {
         document.getElementById('generate-btn').addEventListener('click', () => {
             this.generateTask();
         });
+
+        // Test Buttons
+        const singleTestBtn = document.getElementById('run-single-test');
+        if (singleTestBtn) {
+            singleTestBtn.addEventListener('click', () => {
+                this.testManager.runSingleTest();
+            });
+        }
+        
+        const batchTestBtn = document.getElementById('run-batch-tests');
+        if (batchTestBtn) {
+            batchTestBtn.addEventListener('click', () => {
+                this.testManager.runBatchTests();
+            });
+        }
 
         // API Configuration
         document.getElementById('save-api-config').addEventListener('click', () => {
@@ -755,30 +1402,6 @@ class MathTutorAI {
                 // Lade Profil neu, wenn Profil-Tab geöffnet wird
                 if (targetTab === 'user-profile' && this.userProfile) {
                     this.populateProfileForm(this.userProfile);
-                }
-            });
-        });
-    }
-
-    setupSidebarToggle() {
-        const toggleBtn = document.getElementById('sidebar-toggle');
-        const header = document.querySelector('.header');
-
-        if (!toggleBtn || !header) {
-            return;
-        }
-
-        document.body.classList.add('sidebar-open');
-
-        toggleBtn.addEventListener('click', () => {
-            document.body.classList.toggle('sidebar-open');
-        });
-
-        const navLinks = header.querySelectorAll('.nav a');
-        navLinks.forEach(link => {
-            link.addEventListener('click', () => {
-                if (window.innerWidth <= 1024) {
-                    document.body.classList.remove('sidebar-open');
                 }
             });
         });
@@ -951,7 +1574,10 @@ class MathTutorAI {
             lastUserSolution: '',
             lastCanvasImages: [],
             lastCheckResponse: '',
+            lastAnalysis: null,
             lastWasCorrect: null,
+            attemptCount: 0,
+            previousAnalyses: [],  // Alle vorherigen Analysen für Kontext
             hilfestellungEligible: false,
             hilfestellungProvided: false,
             correctedProvided: false,
@@ -959,16 +1585,13 @@ class MathTutorAI {
             optimalDelivered: false,
             hilfestellungContent: '',
             correctedContent: '',
-            optimalContent: '',
-            // Neue Felder für strukturierte Fehleranalyse
-            attemptNumber: 0,
-            lastStructuredAnalysis: null,
-            useStructuredAnalysis: true // Feature-Flag für die neue Analyse
+            optimalContent: ''
         };
     }
 
     resetSolutionStateForNewTask() {
         this.solutionState = this.getDefaultSolutionState();
+        this.stepCorrections = {};  // Reset step corrections
         this.updateSolutionActionButtons();
     }
 
@@ -1268,14 +1891,8 @@ ANWEISUNGEN:
     }
 
     /**
-     * Baut den detaillierten Fehleranalyse-Prompt für Stufe 1
-     * @param {Object} options - Optionen für den Prompt
-     * @param {string} options.userSolution - Lösung des Schülers
-     * @param {string} options.drawingInfo - Info über Zeichnungen
-     * @param {boolean} options.hasDrawings - Ob Zeichnungen vorhanden sind
-     * @param {number} options.attemptNumber - Nummer des Lösungsversuchs (1 oder 2+)
-     * @param {Object} options.previousAnalysis - Vorherige Analyse (bei 2. Versuch)
-     * @param {Object} options.studentContext - Schülerkontext (Stärken/Schwächen)
+     * Baut den Prompt für die strukturierte Fehleranalyse
+     * @param {Object} params - Parameter
      * @returns {Object} - { systemPrompt, userPrompt }
      */
     buildErrorAnalysisPrompt({ userSolution, drawingInfo, hasDrawings, attemptNumber = 1, previousAnalysis = null, studentContext = null }) {
@@ -1349,21 +1966,25 @@ Deine Aufgaben
 1. Rechenweg strukturieren
    - Nimm den Schüler-Rechenweg (roh, evtl. unübersichtlich) und zerlege ihn in nummerierte Teilschritte.
    - Jeder Teilschritt muss genau eine klare Aussage/Umformung/Rechnung enthalten.
+   - WICHTIG: Übernimm den ORIGINAL-TEXT des Schülers EXAKT wie er ihn geschrieben hat!
+   - Auch bei Fehlern: Zeige den FALSCHEN Schritt des Schülers, NICHT die korrigierte Version!
+   - rawText = exakter Originaltext des Schülers
+   - latex = LaTeX-Version des Originaltexts (auch wenn falsch!)
+   - Gib bei jedem Schritt (außer dem letzten) das Feld "operation" an, das beschreibt, welche Rechenoperation zum NÄCHSTEN Schritt führt.
+     Beispiele für operation: ":2x" (durch 2x teilen), "zgf." (zusammengefasst), "+3", "-5", "·2", "quadrieren", "Wurzel ziehen"
 
 2. Logik prüfen (Priorität 1)
    - Prüfe, ob der Ansatz logisch nachvollziehbar und langfristig zielführend ist (nicht zwingend effizient).
    - Markiere die erste logisch nicht zielführende Stelle als errorType: "logic".
    - Markiere alle folgenden logisch unschlüssigen Schritte ebenfalls als "logic".
-   - Wenn es später im Rechenweg erneut einen neuen Logikfehler gibt (nicht nur Folge des ersten), markiere auch diesen Schritt als "logic".
 
 3. Rechnungen prüfen (Priorität 2)
    - Prüfe alle Rechnungen auf rechnerische Richtigkeit.
    - Markiere grobe Rechenfehler (inkl. Vorzeichenfehler) als errorType: "calc".
-   - Rundung: maximal zwei Nachkommastellen; eine Rundungstoleranz von ±10% gilt als korrekt (dann kein Rechenfehler).
+   - Rundung: maximal zwei Nachkommastellen; eine Rundungstoleranz von ±10% gilt als korrekt.
 
 4. Folgefehler markieren (Priorität 3)
    - Wenn ein späterer Schritt nur falsch ist, weil ein früherer Rechenfehler übernommen wurde, markiere ihn als errorType: "followup".
-   - followup heißt: Der Schritt wäre korrekt, wenn der frühere Fehler nicht passiert wäre.
 
 5. Formales nur selten
    - errorType: "formal" nur verwenden, wenn Logik- und Rechenfehler selten sind.
@@ -1374,24 +1995,30 @@ Was du in Stufe 1 NICHT tust
 - Keine Erklärungen in ganzen Sätzen.
 - Keine vollständige Musterlösung.
 - Kein motivierendes Feedback.
+- NIEMALS die richtige Lösung im latex-Feld zeigen!
+- NIEMALS den fehlerhaften Schritt durch die Korrektur ersetzen!
+- Der Schüler soll seinen EIGENEN Fehler sehen, nicht was richtig gewesen wäre!
 
-LaTeX-Formatierung (KRITISCH)
-Die Felder steps[].latex müssen stabil rendbar sein.
+⚠️ LaTeX-Formatierung (KRITISCH) ⚠️
+Die Felder steps[].latex müssen REINEN LaTeX-Inhalt enthalten.
 
-Math-Mode immer korrekt und geschlossen:
-- Verwende für jeden mathematischen Ausdruck einheitlich \\( ... \\) (bevorzugt) und niemals offene Delimiter.
-- Jede latex-Zeile muss innerhalb dieses einen Strings vollständig sein.
+KEINE DELIMITER im latex-Feld:
+- NIEMALS \\( oder \\) im latex-Feld verwenden!
+- NIEMALS $ oder $$ im latex-Feld verwenden!
+- NIEMALS \\[ oder \\] im latex-Feld verwenden!
+- Das Frontend fügt die Delimiter automatisch hinzu!
+
+RICHTIG: "latex": "x^2 + 2x - 3"
+FALSCH:  "latex": "\\\\( x^2 + 2x - 3 \\\\)"
+FALSCH:  "latex": "$x^2 + 2x - 3$"
 
 Keine losen Zeichen:
 - Keine losen Klammern: Jede ( hat ), jede [ hat ], jede { hat }.
-- Keine losen Backslashes: jedes \\ gehört zu einem gültigen LaTeX-Befehl.
-- Brüche immer als \\frac{...}{...} statt /.
-
-Vereinfachen statt riskieren:
-- Wenn eine Darstellung komplex werden würde, nutze einfache Klammern ( ... ).
+- Keine losen Backslashes: jedes \\\\ gehört zu einem gültigen LaTeX-Befehl.
+- Brüche immer als \\\\frac{...}{...}.
 
 KEINE Farben in LaTeX:
-- In latex niemals \\textcolor, \\color oder ähnliche Befehle verwenden.
+- NIEMALS \\\\textcolor, \\\\color oder ähnliche Befehle im latex-Feld!
 - Farben kommen ausschließlich über errorType und uiElements.color.
 
 Output-Regeln
@@ -1399,22 +2026,28 @@ Output-Regeln
 - Keine Einleitung, keine Markdown-Blöcke, keine Kommentare, kein zusätzlicher Text.
 - Keine zusätzlichen Felder außerhalb des Schemas.
 - Reihenfolge: steps in natürlicher Reihenfolge des Schülerwegs (index 1..n).
-- Jeder stepIndex in uiElements muss auf einen existierenden steps[].index verweisen.
 
 Bedeutung der errorType-Werte (Mapping zur Visualisierung)
 - "logic" = rot (Logikfehler / nicht zielführend)
 - "calc" = grün (Rechenfehler)
 - "followup" = orange (Folgefehler)
 - "formal" = hellblau (formal, selten)
-- "none" = korrekt
+- "none" = korrekt (kein Fehler)
 
 uiElements in Stufe 1
 - In Stufe 1 ist uiElements normalerweise leer.
-- Wenn du unbedingt UI-Elemente setzen musst, dann nur neutrale Markierungen ohne Hints/Weiterweg, z.B.:
-  - ein info_box mit sehr kurzem Text wie "Logikfehler" oder "Rechenfehler" (keine Lösungsidee).
+- Wenn du unbedingt UI-Elemente setzen musst, dann nur neutrale Markierungen ohne Hints.
 
-feedback in Stufe 1
-- feedback ist immer null.
+Kurzes Feedback (PFLICHT)
+- Gib im feedback.summarySentence eine kurze Rückmeldung (1-2 Sätze).
+- Nenne was gut gelaufen ist und wo es Probleme gibt.
+- KEINE Details über die Fehler oder deren Lösung verraten!
+- Halte es motivierend und konstruktiv.
+- Beispiele:
+  - "Guter Ansatz! Bei einer Umformung ist ein kleiner Rechenfehler passiert."
+  - "Die ersten Schritte sind korrekt, aber der Lösungsweg führt nicht zum Ziel."
+  - "Sehr gut! Alle Schritte sind mathematisch korrekt."
+  - "Der Rechenweg zeigt gutes Verständnis, aber achte auf die Vorzeichen."
 ${studentContextSection}${previousFeedbackSection}`;
 
         const userPrompt = `Aufgabe:
@@ -1424,14 +2057,203 @@ Lösung des Schülers (Lösungsversuch ${attemptNumber}):
 ${userSolution || '(Keine schriftliche Lösung, nur Zeichnung)'}
 ${drawingInfo}
 
-Analysiere den Lösungsweg und gib das Ergebnis als JSON im vorgegebenen Schema zurück.`;
+Analysiere den Lösungsweg und gib das Ergebnis als JSON im vorgegebenen Schema zurück.
+Achte darauf, bei jedem Schritt (außer dem letzten) das "operation"-Feld anzugeben.`;
 
         return { systemPrompt, userPrompt };
     }
 
     /**
+     * Spezialisierter API-Aufruf für die Fehleranalyse mit Structured Outputs
+     * @param {Object} prompts - { systemPrompt, userPrompt }
+     * @returns {Promise<Object>} - Geparstes TutorResponse JSON
+     */
+    async callErrorAnalysisAPI(prompts) {
+        const { systemPrompt, userPrompt } = prompts;
+        
+        let model;
+        if (this.apiProvider === 'openai') {
+            model = 'gpt-4o'; // Modell mit Structured Outputs Support
+        } else {
+            model = 'claude-3-5-sonnet-20241022';
+        }
+
+        const userMessage = {
+            role: 'user',
+            content: userPrompt
+        };
+
+        let requestBody;
+        let apiUrl;
+        let headers = {
+            'Content-Type': 'application/json'
+        };
+
+        if (this.apiProvider === 'openai') {
+            apiUrl = 'https://api.openai.com/v1/chat/completions';
+            headers['Authorization'] = `Bearer ${this.apiKey}`;
+            
+            // Schema-Anweisungen für bessere Kompatibilität
+            const schemaInstructions = `
+
+WICHTIG: Du MUSST deine Antwort als valides JSON-Objekt im folgenden Format ausgeben:
+{
+  "steps": [
+    {
+      "index": 1,
+      "rawText": "Originaltext des Schülers",
+      "latex": "x^2 + 2x - 3",
+      "errorType": "none|logic|calc|followup|formal",
+      "operation": ":2 oder zgf. oder +3 (optional, für alle außer letzten Schritt)"
+    }
+  ],
+  "uiElements": [],
+  "feedback": {
+    "summarySentence": "Kurze Rückmeldung (1-2 Sätze) was gut war und wo es Probleme gibt"
+  }
+}
+
+Gib NUR dieses JSON zurück, keine anderen Texte davor oder danach.`;
+            
+            requestBody = {
+                model: model,
+                messages: [
+                    {
+                        role: 'system',
+                        content: systemPrompt + schemaInstructions
+                    },
+                    userMessage
+                ],
+                max_tokens: 4000,
+                temperature: 0.3,
+                response_format: {
+                    type: 'json_object'
+                }
+            };
+        } else {
+            // Anthropic - Tool Use für strukturierte Ausgabe
+            apiUrl = 'https://api.anthropic.com/v1/messages';
+            headers['x-api-key'] = this.apiKey;
+            headers['anthropic-version'] = '2023-06-01';
+            
+            const toolDefinition = {
+                name: 'submit_error_analysis',
+                description: 'Strukturierte Fehleranalyse des Schüler-Lösungswegs',
+                input_schema: ERROR_ANALYSIS_SCHEMA.schema
+            };
+            
+            requestBody = {
+                model: model,
+                system: systemPrompt,
+                messages: [userMessage],
+                max_tokens: 4000,
+                temperature: 0.3,
+                tools: [toolDefinition],
+                tool_choice: { type: 'tool', name: 'submit_error_analysis' }
+            };
+        }
+
+        console.log('[ErrorAnalysis] Sending API request:', { provider: this.apiProvider, model });
+
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify(requestBody)
+        });
+
+        if (!response.ok) {
+            let errorDetails = '';
+            try {
+                const errorData = await response.json();
+                console.error('[ErrorAnalysis] API Error Details:', errorData);
+                errorDetails = errorData.error?.message || JSON.stringify(errorData);
+            } catch (e) {
+                errorDetails = response.statusText;
+            }
+            throw new Error(`API-Fehler (${response.status}): ${errorDetails}`);
+        }
+
+        const data = await response.json();
+        console.log('[ErrorAnalysis] API Response:', data);
+
+        // Parse die strukturierte Antwort
+        let parsedResponse;
+        
+        if (this.apiProvider === 'openai') {
+            if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+                console.error('[ErrorAnalysis] Invalid response structure:', data);
+                throw new Error('Ungültige API-Antwort: ' + JSON.stringify(data));
+            }
+            
+            const message = data.choices[0].message;
+            const content = message.content;
+            
+            console.log('[ErrorAnalysis] Content:', content);
+            
+            if (data.choices[0].finish_reason === 'length') {
+                console.warn('[ErrorAnalysis] Response was truncated');
+                throw new Error('Die Analyse wurde abgeschnitten. Bitte versuche es erneut.');
+            }
+            
+            if (!content || content === '' || content === 'null') {
+                console.error('[ErrorAnalysis] Empty content received');
+                throw new Error('Leere Antwort von der KI erhalten. Bitte versuche es erneut.');
+            }
+            
+            try {
+                parsedResponse = JSON.parse(content);
+            } catch (parseError) {
+                console.error('[ErrorAnalysis] JSON Parse Error:', parseError);
+                throw new Error('Fehler beim Parsen der Fehleranalyse: ' + parseError.message);
+            }
+        } else {
+            // Anthropic Tool Use Response
+            if (!data.content) {
+                throw new Error('Ungültige API-Antwort: ' + JSON.stringify(data));
+            }
+            
+            const toolUseBlock = data.content.find(block => block.type === 'tool_use');
+            if (!toolUseBlock || !toolUseBlock.input) {
+                const textBlock = data.content.find(block => block.type === 'text');
+                if (textBlock) {
+                    try {
+                        parsedResponse = JSON.parse(textBlock.text);
+                    } catch (e) {
+                        throw new Error('Keine strukturierte Antwort erhalten');
+                    }
+                } else {
+                    throw new Error('Keine gültige Antwort erhalten');
+                }
+            } else {
+                parsedResponse = toolUseBlock.input;
+            }
+        }
+
+        // Sanitiere jeden Step
+        if (parsedResponse.steps && Array.isArray(parsedResponse.steps)) {
+            parsedResponse.steps = parsedResponse.steps.map(step => sanitizeStepLatex(step));
+        }
+
+        // Mathematische Validierung der Fehlermarkierungen
+        // Entfernt falsche Fehlermarkierungen wenn der Schritt mathematisch korrekt ist
+        if (typeof validateErrorMarkings === 'function') {
+            parsedResponse = validateErrorMarkings(parsedResponse);
+            console.log('[ErrorAnalysis] Validation applied, corrections made:', parsedResponse._correctionsMade || 0);
+        }
+
+        // Validiere mit TutorModel falls verfügbar
+        if (window.TutorModel) {
+            const sanitized = window.TutorModel.createTutorResponse(parsedResponse);
+            if (sanitized) {
+                return sanitized;
+            }
+        }
+
+        return parsedResponse;
+    }
+
+    /**
      * Holt den Schülerkontext für den Prompt
-     * @returns {Promise<Object|null>}
      */
     async getStudentContextForPrompt() {
         if (!this.userId || !this.dataAggregator) {
@@ -1446,6 +2268,141 @@ Analysiere den Lösungsweg und gib das Ergebnis als JSON im vorgegebenen Schema 
             console.warn('[MathTutorAI] Could not get student context:', error);
             return null;
         }
+    }
+
+    /**
+     * Baut den Prompt für eine Folge-Analyse nach User-Korrekturen
+     * @param {Object} params - Parameter
+     * @returns {Object} - { systemPrompt, userPrompt }
+     */
+    buildFollowUpAnalysisPrompt({ originalSteps, userCorrections, previousAnalyses, attemptNumber, studentContext }) {
+        // Formatiere den ursprünglichen Lösungsweg
+        let originalSolutionText = 'URSPRÜNGLICHER LÖSUNGSWEG:\n';
+        originalSteps.forEach(step => {
+            const stepNum = step.index || step.stepNumber || '?';
+            const errorLabel = step.errorType && step.errorType !== 'none' 
+                ? ` [${step.errorType.toUpperCase()}]` 
+                : '';
+            originalSolutionText += `Schritt ${stepNum}${errorLabel}: ${step.rawText || step.latex}\n`;
+        });
+        
+        // Formatiere die User-Korrekturen
+        let correctionsText = '\nKORREKTUREN DES SCHÜLERS:\n';
+        const correctionEntries = Object.entries(userCorrections);
+        if (correctionEntries.length > 0) {
+            correctionEntries.forEach(([stepIndex, correction]) => {
+                correctionsText += `Schritt ${stepIndex} NEU: ${correction}\n`;
+            });
+        } else {
+            correctionsText += '(Keine Korrekturen eingegeben)\n';
+        }
+        
+        // Formatiere vorherige Analysen als Kontext
+        let previousAnalysesText = '';
+        if (previousAnalyses && previousAnalyses.length > 0) {
+            previousAnalysesText = '\n=== VORHERIGE LÖSUNGSVERSUCHE ===\n';
+            previousAnalyses.forEach((analysis, idx) => {
+                previousAnalysesText += `Versuch ${idx + 1}:\n`;
+                if (analysis.steps) {
+                    analysis.steps.forEach(step => {
+                        const errorLabel = step.errorType && step.errorType !== 'none' 
+                            ? ` [${step.errorType}]` 
+                            : ' [korrekt]';
+                        previousAnalysesText += `  ${step.index}. ${step.latex}${errorLabel}\n`;
+                    });
+                }
+                if (analysis.feedback && analysis.feedback.summarySentence) {
+                    previousAnalysesText += `  Feedback: ${analysis.feedback.summarySentence}\n`;
+                }
+                previousAnalysesText += '\n';
+            });
+        }
+        
+        // Schülerkontext
+        let studentContextSection = '';
+        if (studentContext) {
+            let strengthsText = '';
+            let weaknessesText = '';
+            if (studentContext.strongAreas?.topics?.length > 0) {
+                strengthsText = studentContext.strongAreas.topics.map(t => `${t.topic} (Level ${t.level}/5)`).join(', ');
+            }
+            if (studentContext.weakAreas?.topics?.length > 0) {
+                weaknessesText = studentContext.weakAreas.topics.map(t => `${t.topic} (Level ${t.level}/5)`).join(', ');
+            }
+            if (strengthsText || weaknessesText) {
+                studentContextSection = `\n=== SCHÜLERKONTEXT ===
+${strengthsText ? `Stärken: ${strengthsText}` : ''}
+${weaknessesText ? `Schwächen: ${weaknessesText}` : ''}
+`;
+            }
+        }
+
+        const systemPrompt = `Du agierst wie eine empathische, erfahrene Mathelehrerin.
+
+Dies ist eine FOLGE-ANALYSE nach Korrekturen des Schülers (Versuch ${attemptNumber}).
+
+Der Schüler hat seinen vorherigen Lösungsweg überarbeitet und bestimmte Schritte korrigiert.
+Deine Aufgabe ist es:
+1. Die korrigierten Schritte zu überprüfen
+2. Folgefehler automatisch anzupassen, wenn der ursprüngliche Fehler behoben wurde
+3. Den neuen, vollständigen Lösungsweg zu bewerten
+
+WICHTIG - FOLGEFEHLER-BEHANDLUNG:
+- Wenn ein Schritt korrigiert wurde, der vorher einen Fehler hatte, prüfe ob die Korrektur korrekt ist
+- Wenn die Korrektur korrekt ist, passe alle FOLGEFEHLER automatisch an
+- Ein Folgefehler wird zu "none" (korrekt), wenn er nur aufgrund des ursprünglichen Fehlers falsch war
+- Wenn ein Folgefehler zusätzliche, unabhängige Fehler enthält, markiere diese entsprechend
+- Nicht korrigierte Schritte mit Fehlern bleiben unverändert markiert
+
+Deine Aufgaben (wie bei der Erst-Analyse):
+1. Rechenweg strukturieren - Alle Schritte auflisten (mit Korrekturen eingebaut)
+2. Logik prüfen (Priorität 1) - errorType: "logic"
+3. Rechnungen prüfen (Priorität 2) - errorType: "calc"  
+4. Folgefehler markieren (Priorität 3) - errorType: "followup"
+5. Formales nur selten - errorType: "formal"
+6. Gib bei jedem Schritt (außer dem letzten) das "operation"-Feld an
+
+⚠️ LaTeX-Formatierung (KRITISCH) ⚠️
+Die Felder steps[].latex müssen REINEN LaTeX-Inhalt enthalten.
+
+KEINE DELIMITER im latex-Feld:
+- NIEMALS \\( oder \\) im latex-Feld verwenden!
+- NIEMALS $ oder $$ im latex-Feld verwenden!
+- Das Frontend fügt die Delimiter automatisch hinzu!
+
+RICHTIG: "latex": "x^2 + 2x - 3"
+FALSCH:  "latex": "\\\\( x^2 + 2x - 3 \\\\)"
+
+Keine losen Zeichen:
+- Keine losen Klammern
+- Brüche als \\\\frac{...}{...}
+
+KEINE Farben in LaTeX:
+- NIEMALS \\\\textcolor, \\\\color im latex-Feld!
+
+Kurzes Feedback (PFLICHT)
+- Gib im feedback.summarySentence eine kurze Rückmeldung (1-2 Sätze)
+- Erwähne ob die Korrekturen erfolgreich waren
+- Beispiele:
+  - "Gut korrigiert! Der Rechenfehler ist behoben und die Folgefehler wurden angepasst."
+  - "Die Korrektur in Schritt 2 ist richtig, aber in Schritt 4 ist noch ein unabhängiger Fehler."
+  - "Leider ist die Korrektur noch nicht korrekt. Prüfe nochmal die Umformung."
+
+Output-Format:
+- Gib NUR ein JSON-Objekt zurück
+- Keine Einleitung, keine Kommentare
+${studentContextSection}${previousAnalysesText}`;
+
+        const userPrompt = `Aufgabe:
+${this.currentTask}
+
+${originalSolutionText}
+${correctionsText}
+
+Analysiere den NEUEN Lösungsweg (mit eingebauten Korrekturen) und gib das Ergebnis als JSON zurück.
+Beachte: Wenn ein Fehler korrigiert wurde, passe die Folgefehler entsprechend an!`;
+
+        return { systemPrompt, userPrompt };
     }
 
     buildHilfestellungPrompt() {
@@ -1952,50 +2909,28 @@ WICHTIGE RICHTLINIEN:
         } else {
             baseSystemPrompt = `Du bist ein erfahrener Mathematik-Lehrer mit Spezialisierung auf deutsche Schulmathematik.
 
-⚠️ KRITISCH - LaTeX-Formatierung (STRIKTE REGELN):
-
-ERLAUBTE DELIMITER:
-- Inline-Mathe: $...$ (z.B. $f(x) = x^2$)
-- Display-Mathe: $$...$$ (z.B. $$\\int_0^1 x\\,dx$$)
-
-VERBOTENE DELIMITER (NIEMALS VERWENDEN!):
-- NIEMALS \\( oder \\) verwenden!
-- NIEMALS \\[ oder \\] verwenden!
-- NUR $ und $$ sind erlaubt!
-
-WICHTIGE TRENNUNGSREGEL - Text und Mathe getrennt halten:
-- FALSCH: $f(x) = 2x - 3 und g(x) = x^2$
-- RICHTIG: $f(x) = 2x - 3$ und $g(x) = x^2$
-- Deutsche Wörter (und, oder, mit, auf, der, die, das, Berechne, Bestimme, usw.) gehören NIEMALS in $...$!
-- Jede Formel einzeln in $...$ wrappen, Text dazwischen normal schreiben.
-
-BEISPIELE FÜR KORREKTE FORMATIERUNG:
-- "Gegeben sind die Funktionen $f(x) = 2x - 3$ und $g(x) = -x^2 + 4x - 1$."
-- "Berechne $f(-2)$, $f(0)$ und $f(3)$."
-- "Bestimme die Schnittpunkte, indem du $f(x) = g(x)$ löst."
-- "Untersuche, ob der Punkt $P(1|-1)$ auf dem Graphen liegt."
-
-KORREKTE LaTeX-BEFEHLE:
-- Brüche: $\\frac{a}{b}$ (beide {} sind Pflicht!)
-- Wurzeln: $\\sqrt{x}$ (Klammer ist Pflicht!)
-- Potenzen: $x^{2}$ oder $x^{10}$ -> bei mehreren Ziffern: $x^{10}$
-- Integrale: $\\int_{a}^{b} f(x)\\,dx$
+KRITISCH WICHTIG - LaTeX-Formatierung:
+1. Verwende für INLINE mathematische Ausdrücke: $...$
+   Beispiel: Berechne die Ableitung von $f(x) = x^3 + 2x$.
+2. Verwende für DISPLAY mathematische Ausdrücke: $$...$$
+   Beispiel: $$\\int_{0}^{\\pi} \\sin(x) \\, dx$$
+3. NIEMALS einzelne Symbole wrappen - nur komplette Formeln!
+4. Korrekte LaTeX-Befehle:
+   - Integrale: $\\int_{a}^{b} f(x) \\, dx$
+   - Brüche: $\\frac{a}{b}$
+   - Wurzeln: $\\sqrt{x}$
+   - Potenzen: $x^{2}$
 
 WICHTIGE RICHTLINIEN für Aufgaben-Generierung:
 1. Erstelle Aufgaben, die dem deutschen Lehrplan entsprechen
-2. Strukturiere die Aufgabe klar mit Teilaufgaben (1., 2., 3., ...)
+2. Strukturiere die Aufgabe klar mit einer klaren Aufgabenstellung
 3. Berücksichtige das angegebene Schwierigkeitsniveau
 4. Verwende deutsche mathematische Terminologie
+5. Gib KEINE Lösung an - nur die Aufgabenstellung!
 
-⚠️ STRENG VERBOTEN - Gib unter KEINEN Umständen aus:
-- KEINE Lösung oder Teillösung
-- KEINE Lösungshinweise oder Tipps
-- KEINE Erklärungen zum Lösungsweg
-- KEINE Zwischenschritte oder Ansätze
-- KEIN Endergebnis oder Teilergebnis
-Der Schüler soll die Aufgabe VOLLSTÄNDIG SELBST lösen!
+WICHTIG: Gib nur die Aufgabenstellung aus, keine Lösung, keine Lösungshinweise, keine Erklärungen. Der Schüler soll die Aufgabe selbst lösen.
 
-Erstelle NUR die Aufgabenstellung - nichts anderes.`;
+Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern.`;
         }
         
         const shouldPersonalize = type !== 'abi-generate';
@@ -2006,7 +2941,7 @@ Erstelle NUR die Aufgabenstellung - nichts anderes.`;
         // Bestimme das richtige Modell basierend auf Bild-Upload
         let model;
         if (this.apiProvider === 'openai') {
-            model = 'gpt-5.1';
+            model = 'gpt-5.2';
         } else {
             model = 'claude-3-5-sonnet-20241022';
         }
@@ -2087,16 +3022,13 @@ Erstelle NUR die Aufgabenstellung - nichts anderes.`;
                 },
                 userMessage
             ],
+            temperature: 0.7
         };
 
         if (this.apiProvider === 'openai') {
-            requestBody.max_completion_tokens = 4000;
-            // Erhöhe den Reasoning-Effort für bessere Aufgabenqualität
-            requestBody.reasoning_effort = 'high';
-            // GPT-5.1 unterstützt nur temperature=1 (Standard)
+            requestBody.max_completion_tokens = 2000;
         } else {
-            requestBody.max_tokens = 4000;
-            requestBody.temperature = 0.7; // Nur für Anthropic
+            requestBody.max_tokens = 2000;
         }
 
         // Anthropic-spezifische Parameter
@@ -2142,227 +3074,17 @@ Erstelle NUR die Aufgabenstellung - nichts anderes.`;
         const data = await response.json();
         console.log('API Response:', data);
         
-        let responseContent;
-        
         if (this.apiProvider === 'openai') {
             if (!data.choices || !data.choices[0] || !data.choices[0].message) {
                 throw new Error('Ungültige API-Antwort: ' + JSON.stringify(data));
             }
-            responseContent = data.choices[0].message.content;
+            return data.choices[0].message.content;
         } else {
             if (!data.content || !data.content[0]) {
                 throw new Error('Ungültige API-Antwort: ' + JSON.stringify(data));
             }
-            responseContent = data.content[0].text;
+            return data.content[0].text;
         }
-        
-        // Wende LaTeX-Sanitierung auf die Antwort an
-        if (typeof sanitizeApiResponse === 'function') {
-            responseContent = sanitizeApiResponse(responseContent);
-            console.log('[MathTutorAI] LaTeX sanitization applied');
-        }
-        
-        return responseContent;
-    }
-
-    /**
-     * Spezialisierter API-Aufruf für die Fehleranalyse mit Structured Outputs
-     * Verwendet OpenAI's json_schema response_format bzw. Anthropic's Tool Use
-     * @param {Object} prompts - { systemPrompt, userPrompt }
-     * @returns {Promise<Object>} - Geparstes TutorResponse JSON
-     */
-    async callErrorAnalysisAPI(prompts) {
-        const { systemPrompt, userPrompt } = prompts;
-        
-        let model;
-        if (this.apiProvider === 'openai') {
-            model = 'gpt-5.1'; // Modell mit Structured Outputs Support
-        } else {
-            model = 'claude-3-5-sonnet-20241022';
-        }
-
-        const userMessage = {
-            role: 'user',
-            content: userPrompt
-        };
-
-        let requestBody;
-        let apiUrl;
-        let headers = {
-            'Content-Type': 'application/json'
-        };
-
-        if (this.apiProvider === 'openai') {
-            // OpenAI mit Structured Outputs (json_schema)
-            apiUrl = 'https://api.openai.com/v1/chat/completions';
-            headers['Authorization'] = `Bearer ${this.apiKey}`;
-            
-            // Füge das JSON-Schema als Teil des System-Prompts hinzu für bessere Kompatibilität
-            const schemaInstructions = `
-
-WICHTIG: Du MUSST deine Antwort als valides JSON-Objekt im folgenden Format ausgeben:
-{
-  "steps": [
-    {
-      "index": 1,
-      "rawText": "Originaltext des Schülers",
-      "latex": "\\\\(LaTeX-Darstellung\\\\)",
-      "errorType": "none|logic|calc|followup|formal"
-    }
-  ],
-  "uiElements": [
-    {
-      "type": "info_box",
-      "stepIndex": 1,
-      "color": "red|green|orange|blue",
-      "title": "Kurzer Titel",
-      "text": "Kurze Beschreibung"
-    }
-  ],
-  "feedback": null
-}
-
-Gib NUR dieses JSON zurück, keine anderen Texte davor oder danach.`;
-            
-            requestBody = {
-                model: model,
-                messages: [
-                    {
-                        role: 'system',
-                        content: systemPrompt + schemaInstructions
-                    },
-                    userMessage
-                ],
-                // GPT-5.1 unterstützt nur temperature=1 (Standard), daher nicht setzen
-                max_completion_tokens: 16000, // Erhöht für komplexere Analysen
-                reasoning_effort: 'high', // Erhöhter Reasoning-Effort für bessere Analyse
-                response_format: {
-                    type: 'json_object' // Einfacheres Format für bessere Kompatibilität
-                }
-            };
-        } else {
-            // Anthropic - Tool Use für strukturierte Ausgabe
-            apiUrl = 'https://api.anthropic.com/v1/messages';
-            headers['x-api-key'] = this.apiKey;
-            headers['anthropic-version'] = '2023-06-01';
-            
-            // Anthropic verwendet Tools statt response_format
-            const toolDefinition = {
-                name: 'submit_error_analysis',
-                description: 'Strukturierte Fehleranalyse des Schüler-Lösungswegs',
-                input_schema: ERROR_ANALYSIS_SCHEMA.schema
-            };
-            
-            requestBody = {
-                model: model,
-                system: systemPrompt,
-                messages: [userMessage],
-                max_tokens: 4000,
-                temperature: 0.3,
-                tools: [toolDefinition],
-                tool_choice: { type: 'tool', name: 'submit_error_analysis' }
-            };
-        }
-
-        console.log('[ErrorAnalysis] Sending API request:', { provider: this.apiProvider, model });
-
-        const response = await fetch(apiUrl, {
-            method: 'POST',
-            headers: headers,
-            body: JSON.stringify(requestBody)
-        });
-
-        if (!response.ok) {
-            let errorDetails = '';
-            try {
-                const errorData = await response.json();
-                console.error('[ErrorAnalysis] API Error Details:', errorData);
-                errorDetails = errorData.error?.message || JSON.stringify(errorData);
-            } catch (e) {
-                errorDetails = response.statusText;
-            }
-            throw new Error(`API-Fehler (${response.status}): ${errorDetails}`);
-        }
-
-        const data = await response.json();
-        console.log('[ErrorAnalysis] API Response:', data);
-
-        // Parse die strukturierte Antwort
-        let parsedResponse;
-        
-        if (this.apiProvider === 'openai') {
-            if (!data.choices || !data.choices[0] || !data.choices[0].message) {
-                console.error('[ErrorAnalysis] Invalid response structure:', data);
-                throw new Error('Ungültige API-Antwort: ' + JSON.stringify(data));
-            }
-            
-            const message = data.choices[0].message;
-            const content = message.content;
-            
-            // Debug-Logging für die Antwortstruktur
-            console.log('[ErrorAnalysis] Message object:', message);
-            console.log('[ErrorAnalysis] Content:', content);
-            console.log('[ErrorAnalysis] Finish reason:', data.choices[0].finish_reason);
-            
-            // Prüfe ob die Antwort abgeschnitten wurde
-            if (data.choices[0].finish_reason === 'length') {
-                console.warn('[ErrorAnalysis] Response was truncated due to length limit');
-                throw new Error('Die Analyse wurde abgeschnitten. Bitte versuche es erneut mit einer kürzeren Lösung.');
-            }
-            
-            // Prüfe ob content existiert und nicht leer ist
-            if (!content || content === '' || content === 'null') {
-                console.error('[ErrorAnalysis] Empty or null content received');
-                // Versuche aus refusal oder anderen Feldern Information zu holen
-                if (message.refusal) {
-                    throw new Error('Die KI hat die Analyse verweigert: ' + message.refusal);
-                }
-                throw new Error('Leere Antwort von der KI erhalten. Bitte versuche es erneut.');
-            }
-            
-            try {
-                parsedResponse = JSON.parse(content);
-            } catch (parseError) {
-                console.error('[ErrorAnalysis] JSON Parse Error:', parseError);
-                console.error('[ErrorAnalysis] Raw content that failed to parse:', content);
-                throw new Error('Fehler beim Parsen der Fehleranalyse: ' + parseError.message);
-            }
-        } else {
-            // Anthropic Tool Use Response
-            if (!data.content) {
-                throw new Error('Ungültige API-Antwort: ' + JSON.stringify(data));
-            }
-            
-            // Finde den tool_use Block
-            const toolUseBlock = data.content.find(block => block.type === 'tool_use');
-            if (!toolUseBlock || !toolUseBlock.input) {
-                // Fallback: Versuche Text-Content als JSON zu parsen
-                const textBlock = data.content.find(block => block.type === 'text');
-                if (textBlock) {
-                    try {
-                        parsedResponse = JSON.parse(textBlock.text);
-                    } catch (e) {
-                        throw new Error('Keine strukturierte Antwort erhalten');
-                    }
-                } else {
-                    throw new Error('Keine gültige Antwort erhalten');
-                }
-            } else {
-                parsedResponse = toolUseBlock.input;
-            }
-        }
-
-        // Validiere und sanitiere die Antwort mit TutorModel
-        if (window.TutorModel) {
-            const sanitized = window.TutorModel.createTutorResponse(parsedResponse);
-            if (!sanitized) {
-                console.warn('[ErrorAnalysis] TutorModel sanitization failed, using raw response');
-                return parsedResponse;
-            }
-            return sanitized;
-        }
-
-        return parsedResponse;
     }
 
     displayResults(content, isTask = false) {
@@ -2968,7 +3690,12 @@ Gib NUR dieses JSON zurück, keine anderen Texte davor oder danach.`;
         // Hole Zeichnungen
         const canvasImages = this.getCanvasImages();
         
-        if (!userSolution && canvasImages.length === 0) {
+        // Prüfe ob Korrekturen vorhanden sind
+        const hasCorrections = this.stepCorrections && Object.keys(this.stepCorrections).length > 0;
+        const hasLastAnalysis = this.solutionState.lastAnalysis && this.solutionState.lastAnalysis.steps;
+        
+        // Bei Korrekturen brauchen wir keine neue Lösung im Textfeld
+        if (!hasCorrections && !userSolution && canvasImages.length === 0) {
             this.showNotification('Bitte gib eine Lösung ein oder erstelle eine Zeichnung.', 'warning');
             return;
         }
@@ -2984,144 +3711,108 @@ Gib NUR dieses JSON zurück, keine anderen Texte davor oder danach.`;
                 });
                 drawingInfo += '\n(Hinweis: Die Skizzen können derzeit nicht direkt analysiert werden, aber du kannst basierend auf der Beschreibung des Schülers Feedback geben.)';
             }
-
-            // Inkrementiere die Versuchsnummer
-            const attemptNumber = (this.solutionState.attemptNumber || 0) + 1;
-            const previousAnalysis = this.solutionState.lastStructuredAnalysis;
-
-            // Hole Schülerkontext für dynamische Prompt-Anpassung
+            
+            // Hole Schülerkontext
             const studentContext = await this.getStudentContextForPrompt();
-
-            // Verwende die strukturierte Fehleranalyse
-            if (this.solutionState.useStructuredAnalysis) {
-                const prompts = this.buildErrorAnalysisPrompt({
+            
+            // Bestimme Versuchsnummer
+            const attemptNumber = (this.solutionState.attemptCount || 0) + 1;
+            this.solutionState.attemptCount = attemptNumber;
+            
+            let prompts;
+            
+            // Prüfe ob wir eine Folge-Analyse mit Korrekturen machen
+            if (hasCorrections && hasLastAnalysis) {
+                console.log('[submitSolution] Using follow-up analysis with corrections:', this.stepCorrections);
+                
+                // Speichere aktuelle Analyse in previousAnalyses
+                if (!this.solutionState.previousAnalyses) {
+                    this.solutionState.previousAnalyses = [];
+                }
+                this.solutionState.previousAnalyses.push(this.solutionState.lastAnalysis);
+                
+                // Verwende Folge-Analyse-Prompt
+                prompts = this.buildFollowUpAnalysisPrompt({
+                    originalSteps: this.solutionState.lastAnalysis.steps,
+                    userCorrections: this.stepCorrections,
+                    previousAnalyses: this.solutionState.previousAnalyses,
+                    attemptNumber,
+                    studentContext
+                });
+            } else {
+                // Normale Erst-Analyse
+                console.log('[submitSolution] Using initial analysis');
+                
+                prompts = this.buildErrorAnalysisPrompt({
                     userSolution,
                     drawingInfo,
                     hasDrawings: canvasImages.length > 0,
                     attemptNumber,
-                    previousAnalysis,
+                    previousAnalysis: attemptNumber > 1 ? this.solutionState.lastAnalysis : null,
                     studentContext
                 });
-
-                console.log('[SubmitSolution] Using structured error analysis, attempt:', attemptNumber);
-
-                const structuredResponse = await this.callErrorAnalysisAPI(prompts);
-                
-                // Prüfe ob alle Schritte korrekt sind (keine Fehler)
-                const hasErrors = structuredResponse.steps?.some(step => 
-                    step.errorType && step.errorType !== 'none'
-                );
-                const success = !hasErrors;
-
-                // Speichere den strukturierten State
-                Object.assign(this.solutionState, {
-                    lastUserSolution: userSolution,
-                    lastCanvasImages: canvasImages,
-                    lastCheckResponse: JSON.stringify(structuredResponse, null, 2),
-                    lastWasCorrect: success,
-                    hilfestellungEligible: !success && !!userSolution,
-                    hilfestellungProvided: false,
-                    correctedProvided: false,
-                    canRequestOptimal: success,
-                    optimalDelivered: false,
-                    hilfestellungContent: '',
-                    correctedContent: '',
-                    optimalContent: '',
-                    attemptNumber,
-                    lastStructuredAnalysis: structuredResponse
-                });
-
-                // Log Performance
-                if (this.userId && this.performanceTracker && this.currentTaskContext) {
-                    await this.performanceTracker.logPerformance(this.userId, {
-                        topic: this.currentTaskContext.topic,
-                        taskType: 'solve',
-                        success: success,
-                        difficulty: this.currentTaskContext.difficulty,
-                        showedSolution: false
-                    });
-                    
-                    // Update Competency
-                    if (this.competencyTracker) {
-                        await this.competencyTracker.updateAfterTask(this.userId, this.currentTaskContext.topic, {
-                            success,
-                            timeSpent: this.performanceTracker.currentTaskStart?.timeSpent || 0
-                        });
-                    }
-                    
-                    // Log Behavior
-                    if (this.behaviorTracker) {
-                        await this.behaviorTracker.trackSelfSolveAttempt(this.userId, {
-                            topic: this.currentTaskContext.topic,
-                            success
-                        });
-                    }
-                }
-
-                // Rendere die strukturierte Antwort
-                this.displayStructuredFeedback(structuredResponse, canvasImages, success);
-            } else {
-                // Fallback: Alte Evaluations-Logik
-                const prompt = this.buildEvaluationPrompt({
-                    userSolution,
-                    drawingInfo,
-                    hasDrawings: canvasImages.length > 0
-                });
-                
-                const response = await this.callAIAPI(prompt, 'analyze', null, this.currentTaskContext?.topic);
-                
-                const STATUS_TOKEN = '__SOLUTION_STATUS:OK__';
-                const success = response.includes(STATUS_TOKEN);
-                const cleanedResponse = success
-                    ? response.replace(STATUS_TOKEN, '').trim()
-                    : response.trim();
-
-                Object.assign(this.solutionState, {
-                    lastUserSolution: userSolution,
-                    lastCanvasImages: canvasImages,
-                    lastCheckResponse: cleanedResponse,
-                    lastWasCorrect: success,
-                    hilfestellungEligible: !success && !!userSolution,
-                    hilfestellungProvided: false,
-                    correctedProvided: false,
-                    canRequestOptimal: success,
-                    optimalDelivered: false,
-                    hilfestellungContent: '',
-                    correctedContent: '',
-                    optimalContent: '',
-                    attemptNumber
-                });
-                
-                // Log Performance
-                if (this.userId && this.performanceTracker && this.currentTaskContext) {
-                    await this.performanceTracker.logPerformance(this.userId, {
-                        topic: this.currentTaskContext.topic,
-                        taskType: 'solve',
-                        success: success,
-                        difficulty: this.currentTaskContext.difficulty,
-                        showedSolution: false
-                    });
-                    
-                    // Update Competency
-                    if (this.competencyTracker) {
-                        await this.competencyTracker.updateAfterTask(this.userId, this.currentTaskContext.topic, {
-                            success,
-                            timeSpent: this.performanceTracker.currentTaskStart?.timeSpent || 0
-                        });
-                    }
-                    
-                    // Log Behavior
-                    if (this.behaviorTracker) {
-                        await this.behaviorTracker.trackSelfSolveAttempt(this.userId, {
-                            topic: this.currentTaskContext.topic,
-                            success
-                        });
-                    }
-                }
-                
-                this.displayFeedback(cleanedResponse, canvasImages);
             }
             
+            // API-Aufruf für strukturierte Analyse
+            const analysisResponse = await this.callErrorAnalysisAPI(prompts);
+            
+            console.log('[submitSolution] Analysis response:', analysisResponse);
+            
+            // Bestimme Erfolg basierend auf Fehlertypen
+            const hasErrors = analysisResponse.steps && analysisResponse.steps.some(
+                step => step.errorType && step.errorType !== 'none'
+            );
+            const success = !hasErrors;
+            
+            // Reset step corrections nach der Analyse
+            this.stepCorrections = {};
+            
+            // Speichere Analyse-Ergebnis
+            Object.assign(this.solutionState, {
+                lastUserSolution: hasCorrections ? this.solutionState.lastUserSolution : userSolution,
+                lastCanvasImages: canvasImages,
+                lastAnalysis: analysisResponse,
+                lastCheckResponse: analysisResponse,
+                lastWasCorrect: success,
+                hilfestellungEligible: !success && !!(hasCorrections ? this.solutionState.lastUserSolution : userSolution),
+                hilfestellungProvided: false,
+                correctedProvided: false,
+                canRequestOptimal: success,
+                optimalDelivered: false,
+                hilfestellungContent: '',
+                correctedContent: '',
+                optimalContent: ''
+            });
+            
+            // Log Performance
+            if (this.userId && this.performanceTracker && this.currentTaskContext) {
+                await this.performanceTracker.logPerformance(this.userId, {
+                    topic: this.currentTaskContext.topic,
+                    taskType: 'solve',
+                    success: success,
+                    difficulty: this.currentTaskContext.difficulty,
+                    showedSolution: false
+                });
+                
+                // Update Competency
+                if (this.competencyTracker) {
+                    await this.competencyTracker.updateAfterTask(this.userId, this.currentTaskContext.topic, {
+                        success,
+                        timeSpent: this.performanceTracker.currentTaskStart?.timeSpent || 0
+                    });
+                }
+                
+                // Log Behavior
+                if (this.behaviorTracker) {
+                    await this.behaviorTracker.trackSelfSolveAttempt(this.userId, {
+                        topic: this.currentTaskContext.topic,
+                        success
+                    });
+                }
+            }
+            
+            // Zeige strukturierte Feedback-Anzeige
+            this.displayStructuredFeedback(analysisResponse, success);
             this.updateSolutionActionButtons();
         } catch (error) {
             console.error('Fehler beim Überprüfen der Lösung:', error);
@@ -3132,82 +3823,342 @@ Gib NUR dieses JSON zurück, keine anderen Texte davor oder danach.`;
     }
 
     /**
-     * Zeigt das strukturierte Feedback aus der Fehleranalyse an
-     * @param {Object} analysis - TutorResponse Objekt
-     * @param {Array} canvasImages - Zeichnungen des Schülers
-     * @param {boolean} success - Ob die Lösung korrekt ist
+     * Zeigt die strukturierte Fehleranalyse an
      */
-    displayStructuredFeedback(analysis, canvasImages = [], success = false) {
+    displayStructuredFeedback(analysis, success) {
         const feedbackArea = document.getElementById('feedback-area');
         const feedbackContent = document.getElementById('feedback-content');
         
-        if (feedbackArea && feedbackContent) {
-            feedbackContent.innerHTML = '';
-            
-            // Erfolgs- oder Fehler-Header
-            const headerDiv = document.createElement('div');
-            headerDiv.className = success ? 'feedback-header feedback-success' : 'feedback-header feedback-error';
-            headerDiv.innerHTML = success 
-                ? '<i class="fas fa-check-circle"></i> <strong>Richtig!</strong> Dein Lösungsweg ist korrekt.'
-                : `<i class="fas fa-times-circle"></i> <strong>Noch nicht ganz richtig.</strong> Schau dir die Markierungen an (Versuch ${this.solutionState.attemptNumber}).`;
-            feedbackContent.appendChild(headerDiv);
-
-            // Zeichnungen anzeigen falls vorhanden
-            if (canvasImages && canvasImages.length > 0) {
-                const imagesDiv = document.createElement('div');
-                imagesDiv.className = 'feedback-images';
-                imagesDiv.innerHTML = '<h5><i class="fas fa-image"></i> Deine Skizzen:</h5>';
-                const imagesGrid = document.createElement('div');
-                imagesGrid.className = 'feedback-images-grid';
-                canvasImages.forEach(img => {
-                    const imgWrapper = document.createElement('div');
-                    imgWrapper.className = 'feedback-image-wrapper';
-                    imgWrapper.innerHTML = `
-                        <img src="${img.dataUrl}" alt="${img.name}" />
-                        <span class="feedback-image-label">${img.name}</span>
-                    `;
-                    imagesGrid.appendChild(imgWrapper);
-                });
-                imagesDiv.appendChild(imagesGrid);
-                feedbackContent.appendChild(imagesDiv);
-            }
-
-            // TutorView rendern
-            if (window.TutorView && analysis) {
-                const tutorContainer = document.createElement('div');
-                tutorContainer.className = 'tutor-response-wrapper';
-                window.TutorView.renderTutorResponse(tutorContainer, analysis, { 
-                    showFeedback: false, // Stufe 1 hat kein Feedback
-                    showSteps: true 
-                });
-                feedbackContent.appendChild(tutorContainer);
-            } else {
-                // Fallback wenn TutorView nicht geladen ist
-                const fallbackDiv = document.createElement('div');
-                fallbackDiv.className = 'feedback-fallback';
-                fallbackDiv.innerHTML = '<pre>' + JSON.stringify(analysis, null, 2) + '</pre>';
-                feedbackContent.appendChild(fallbackDiv);
-            }
-
-            // Legende für Fehlertypen
-            if (!success) {
-                const legendDiv = document.createElement('div');
-                legendDiv.className = 'error-type-legend';
-                legendDiv.innerHTML = `
-                    <h5><i class="fas fa-palette"></i> Fehlertypen:</h5>
-                    <ul>
-                        <li><span class="legend-color legend-logic"></span> <strong>Rot:</strong> Logikfehler (Ansatz nicht zielführend)</li>
-                        <li><span class="legend-color legend-calc"></span> <strong>Grün:</strong> Rechenfehler</li>
-                        <li><span class="legend-color legend-followup"></span> <strong>Orange:</strong> Folgefehler</li>
-                        <li><span class="legend-color legend-formal"></span> <strong>Hellblau:</strong> Formfehler</li>
-                    </ul>
-                `;
-                feedbackContent.appendChild(legendDiv);
-            }
-            
-            feedbackArea.style.display = 'block';
-            feedbackArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        if (!feedbackArea || !feedbackContent) {
+            console.error('[displayStructuredFeedback] Feedback area not found');
+            return;
         }
+        
+        feedbackArea.style.display = 'block';
+        feedbackContent.innerHTML = '';
+        
+        // Status-Banner
+        const statusBanner = document.createElement('div');
+        statusBanner.className = success ? 'feedback-status success' : 'feedback-status error';
+        statusBanner.innerHTML = success 
+            ? '<i class="fas fa-check-circle"></i> <strong>Lösung korrekt!</strong> Alle Schritte sind richtig.'
+            : '<i class="fas fa-exclamation-triangle"></i> <strong>Fehler gefunden</strong> - Prüfe die markierten Schritte.';
+        feedbackContent.appendChild(statusBanner);
+        
+        // Kurzes Feedback anzeigen
+        if (analysis.feedback && analysis.feedback.summarySentence) {
+            const feedbackSummary = document.createElement('div');
+            feedbackSummary.className = 'feedback-summary-box';
+            feedbackSummary.innerHTML = `
+                <i class="fas fa-comment-dots"></i>
+                <span>${analysis.feedback.summarySentence}</span>
+            `;
+            feedbackContent.appendChild(feedbackSummary);
+        }
+        
+        // Steps rendern
+        if (analysis.steps && analysis.steps.length > 0) {
+            const stepsContainer = document.createElement('div');
+            stepsContainer.className = 'tutor-steps-wrapper';
+            
+            const stepsHeader = document.createElement('h4');
+            stepsHeader.className = 'tutor-section-header';
+            stepsHeader.innerHTML = '<i class="fas fa-list-ol"></i> Dein Lösungsweg';
+            stepsContainer.appendChild(stepsHeader);
+            
+            const stepsList = document.createElement('div');
+            stepsList.className = 'tutor-step-list';
+            
+            analysis.steps.forEach((step, idx) => {
+                const stepEl = this.renderAnalysisStep(step, idx, analysis.steps.length);
+                stepsList.appendChild(stepEl);
+            });
+            
+            stepsContainer.appendChild(stepsList);
+            feedbackContent.appendChild(stepsContainer);
+        }
+        
+        // UI-Elemente rendern (falls vorhanden)
+        if (analysis.uiElements && analysis.uiElements.length > 0) {
+            const uiContainer = document.createElement('div');
+            uiContainer.className = 'tutor-ui-elements';
+            
+            analysis.uiElements.forEach(elem => {
+                const elemEl = this.renderUiElement(elem);
+                if (elemEl) {
+                    uiContainer.appendChild(elemEl);
+                }
+            });
+            
+            feedbackContent.appendChild(uiContainer);
+        }
+        
+        // Zusammenfassung der Fehler
+        if (!success) {
+            const errorSummary = this.createErrorSummary(analysis.steps);
+            feedbackContent.appendChild(errorSummary);
+        }
+        
+        // MathJax rendern und dann Formeln klickbar machen
+        if (window.MathJax && window.MathJax.typesetPromise) {
+            window.MathJax.typesetPromise([feedbackContent])
+                .then(() => {
+                    // Mache Funktionsformeln klickbar für Graph-Anzeige
+                    if (window.GraphRenderer && window.GraphRenderer.makeFormulasClickable) {
+                        window.GraphRenderer.makeFormulasClickable(feedbackContent);
+                    }
+                })
+                .catch(err => {
+                    console.error('[MathJax] Rendering error:', err);
+                });
+        } else {
+            // Fallback ohne MathJax
+            if (window.GraphRenderer && window.GraphRenderer.makeFormulasClickable) {
+                window.GraphRenderer.makeFormulasClickable(feedbackContent);
+            }
+        }
+    }
+
+    /**
+     * Rendert einen einzelnen Analyse-Step
+     */
+    renderAnalysisStep(step, idx, totalSteps) {
+        const stepEl = document.createElement('div');
+        const hasError = step.errorType && step.errorType !== 'none';
+        const stepIndex = step.index || idx + 1;
+        
+        // Fehlertyp-Klasse
+        const errorClass = {
+            'none': '',
+            'logic': 'step-error-logic',
+            'calc': 'step-error-calc',
+            'followup': 'step-error-followup',
+            'formal': 'step-error-formal'
+        }[step.errorType] || '';
+        
+        stepEl.className = `tutor-step ${errorClass} ${hasError ? 'has-error' : ''}`.trim();
+        stepEl.dataset.stepIndex = stepIndex;
+        stepEl.style.position = 'relative';
+        
+        // Step-Inhalt Container
+        const contentWrapper = document.createElement('div');
+        contentWrapper.className = 'tutor-step-content-wrapper';
+        
+        // Step-Nummer
+        const numEl = document.createElement('span');
+        numEl.className = 'tutor-step-num';
+        numEl.textContent = `${stepIndex}.`;
+        contentWrapper.appendChild(numEl);
+        
+        // Inhalt-Container
+        const contentEl = document.createElement('div');
+        contentEl.className = 'tutor-step-content';
+        
+        // LaTeX-Darstellung (ohne Delimiter - wir fügen sie hier hinzu)
+        if (step.latex) {
+            const latexEl = document.createElement('div');
+            latexEl.className = 'tutor-step-latex';
+            
+            // Bereinige das LaTeX (entferne eventuell noch vorhandene Delimiter)
+            let cleanLatex = step.latex;
+            if (typeof stripLatexDelimiters === 'function') {
+                cleanLatex = stripLatexDelimiters(cleanLatex);
+            }
+            
+            // Füge passende Delimiter hinzu
+            if (cleanLatex.includes('\\\\') || cleanLatex.includes('\\begin')) {
+                latexEl.innerHTML = `\\[${cleanLatex}\\]`;
+            } else {
+                latexEl.innerHTML = `\\(${cleanLatex}\\)`;
+            }
+            contentEl.appendChild(latexEl);
+        }
+        
+        // Originaltext (falls vorhanden)
+        if (step.rawText && step.rawText !== step.latex) {
+            const rawEl = document.createElement('div');
+            rawEl.className = 'tutor-step-raw';
+            rawEl.textContent = step.rawText;
+            contentEl.appendChild(rawEl);
+        }
+        
+        contentWrapper.appendChild(contentEl);
+        
+        // Operation zum nächsten Schritt (falls nicht letzter Schritt)
+        if (step.operation && idx < totalSteps - 1) {
+            const opEl = document.createElement('span');
+            opEl.className = 'tutor-step-operation';
+            opEl.textContent = `| ${step.operation}`;
+            contentWrapper.appendChild(opEl);
+        }
+        
+        stepEl.appendChild(contentWrapper);
+        
+        // Fehlertyp-Badge
+        if (hasError) {
+            const badge = document.createElement('span');
+            badge.className = `tutor-error-badge error-${step.errorType}`;
+            
+            const badgeText = {
+                'logic': 'Logikfehler',
+                'calc': 'Rechenfehler',
+                'followup': 'Folgefehler',
+                'formal': 'Formfehler'
+            }[step.errorType] || 'Fehler';
+            
+            badge.textContent = badgeText;
+            stepEl.appendChild(badge);
+            
+            // Korrektur-Badge (falls vorhanden)
+            if (this.stepCorrections && this.stepCorrections[stepIndex]) {
+                const corrBadge = document.createElement('span');
+                corrBadge.className = 'step-has-correction';
+                corrBadge.innerHTML = '<i class="fas fa-edit"></i> Korrigiert';
+                stepEl.appendChild(corrBadge);
+            }
+            
+            // Eingabefeld-Container für Korrekturen
+            const correctionContainer = document.createElement('div');
+            correctionContainer.className = 'step-correction-container';
+            correctionContainer.innerHTML = `
+                <label class="step-correction-label">
+                    <i class="fas fa-pencil-alt"></i>
+                    Deine Korrektur für Schritt ${stepIndex}:
+                </label>
+                <textarea 
+                    class="step-correction-input" 
+                    data-step-index="${stepIndex}"
+                    placeholder="Gib hier deine korrigierte Version ein..."
+                    rows="2"
+                >${this.stepCorrections && this.stepCorrections[stepIndex] ? this.stepCorrections[stepIndex] : ''}</textarea>
+            `;
+            stepEl.appendChild(correctionContainer);
+            
+            // Click-Handler zum Auf-/Zuklappen
+            stepEl.addEventListener('click', (e) => {
+                // Nicht klappen wenn ins Textfeld geklickt wird
+                if (e.target.classList.contains('step-correction-input')) {
+                    return;
+                }
+                stepEl.classList.toggle('expanded');
+            });
+            
+            // Input-Handler für Korrekturen
+            const textarea = correctionContainer.querySelector('.step-correction-input');
+            textarea.addEventListener('input', (e) => {
+                this.updateStepCorrection(stepIndex, e.target.value);
+            });
+            
+            // Verhindern dass Klick auf Input das Zuklappen triggert
+            textarea.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+        }
+        
+        return stepEl;
+    }
+
+    /**
+     * Aktualisiert eine Step-Korrektur
+     */
+    updateStepCorrection(stepIndex, value) {
+        if (!this.stepCorrections) {
+            this.stepCorrections = {};
+        }
+        
+        if (value.trim()) {
+            this.stepCorrections[stepIndex] = value.trim();
+        } else {
+            delete this.stepCorrections[stepIndex];
+        }
+        
+        // Zeige Hinweis wenn Korrekturen vorhanden
+        this.updateCorrectionHint();
+    }
+
+    /**
+     * Zeigt/versteckt den Hinweis für erneutes Prüfen
+     */
+    updateCorrectionHint() {
+        const feedbackContent = document.getElementById('feedback-content');
+        if (!feedbackContent) return;
+        
+        // Entferne existierenden Hinweis
+        const existingHint = feedbackContent.querySelector('.correction-hint');
+        if (existingHint) {
+            existingHint.remove();
+        }
+        
+        // Zeige Hinweis wenn Korrekturen vorhanden
+        if (this.stepCorrections && Object.keys(this.stepCorrections).length > 0) {
+            const hint = document.createElement('div');
+            hint.className = 'correction-hint';
+            hint.innerHTML = `
+                <i class="fas fa-info-circle"></i>
+                <span>Du hast ${Object.keys(this.stepCorrections).length} Korrektur(en) eingegeben. 
+                Klicke auf "Lösung überprüfen" um deine Änderungen zu prüfen.</span>
+            `;
+            feedbackContent.appendChild(hint);
+        }
+    }
+
+    /**
+     * Rendert ein UI-Element
+     */
+    renderUiElement(elem) {
+        const container = document.createElement('div');
+        container.className = `tutor-ui-element ui-${elem.type} ui-color-${elem.color || 'blue'}`;
+        
+        if (elem.title) {
+            const titleEl = document.createElement('strong');
+            titleEl.textContent = elem.title;
+            container.appendChild(titleEl);
+        }
+        
+        if (elem.text) {
+            const textEl = document.createElement('span');
+            textEl.textContent = elem.text;
+            container.appendChild(textEl);
+        }
+        
+        return container;
+    }
+
+    /**
+     * Erstellt eine Zusammenfassung der Fehler
+     */
+    createErrorSummary(steps) {
+        const summary = document.createElement('div');
+        summary.className = 'error-summary';
+        
+        const counts = {
+            logic: 0,
+            calc: 0,
+            followup: 0,
+            formal: 0
+        };
+        
+        steps.forEach(step => {
+            if (step.errorType && counts.hasOwnProperty(step.errorType)) {
+                counts[step.errorType]++;
+            }
+        });
+        
+        const summaryItems = [];
+        if (counts.logic > 0) summaryItems.push(`${counts.logic} Logikfehler`);
+        if (counts.calc > 0) summaryItems.push(`${counts.calc} Rechenfehler`);
+        if (counts.followup > 0) summaryItems.push(`${counts.followup} Folgefehler`);
+        if (counts.formal > 0) summaryItems.push(`${counts.formal} Formfehler`);
+        
+        if (summaryItems.length > 0) {
+            summary.innerHTML = `
+                <h5><i class="fas fa-chart-bar"></i> Fehlerübersicht</h5>
+                <p>${summaryItems.join(' • ')}</p>
+                <p class="hint">Klicke auf "Hilfestellung" für detaillierte Erklärungen.</p>
+            `;
+        }
+        
+        return summary;
     }
 
     async requestHint() {
@@ -3476,7 +4427,6 @@ Verwende eine klare Struktur und deutsche mathematische Terminologie.
         const feedbackContent = document.getElementById('feedback-content');
         
         if (feedbackArea && feedbackContent) {
-            // Canvas-Bilder vorbereiten
             let imagesHTML = '';
             if (canvasImages.length > 0) {
                 imagesHTML = '<div class="submitted-drawings"><h5>Deine Zeichnungen:</h5><div class="drawing-previews">';
@@ -3491,83 +4441,42 @@ Verwende eine klare Struktur und deutsche mathematische Terminologie.
                 imagesHTML += '</div></div>';
             }
             
-            // Versuche als strukturiertes TutorResponse zu rendern
-            const renderedStructured = this.tryRenderStructuredResponse(feedbackContent, content);
-            
-            if (renderedStructured) {
-                // Strukturiertes Rendering erfolgreich - Bilder voranstellen falls vorhanden
-                if (imagesHTML) {
-                    feedbackContent.insertAdjacentHTML('afterbegin', imagesHTML);
-                }
-            } else {
-                // Fallback: Plain Text/LaTeX mit bestehender Formatierung
-                feedbackContent.innerHTML = imagesHTML + this.formatResponse(content);
-                // MathJax rendern
-                this.renderMathJax(feedbackContent);
-            }
-            
+            feedbackContent.innerHTML = imagesHTML + this.formatResponse(content);
             feedbackArea.style.display = 'block';
             
             // Scrolle zum Feedback
             feedbackArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        }
-    }
-
-    /**
-     * Versucht Content als strukturiertes TutorResponse zu rendern
-     * @param {HTMLElement} container - Ziel-Container
-     * @param {string|Object} content - API Response (JSON oder Text)
-     * @returns {boolean} - true wenn erfolgreich gerendert
-     */
-    tryRenderStructuredResponse(container, content) {
-        // TutorModel und TutorView müssen geladen sein
-        if (!window.TutorModel || !window.TutorView) {
-            return false;
-        }
-
-        try {
-            // Schnelle Prüfung ob es ein TutorResponse sein könnte
-            if (!window.TutorModel.isTutorResponse(content)) {
-                return false;
-            }
-
-            // Vollständig parsen und sanitieren
-            const response = window.TutorModel.createTutorResponse(content);
-            if (!response || !response.steps || response.steps.length === 0) {
-                return false;
-            }
-
-            // Rendern mit TutorView
-            window.TutorView.renderTutorResponse(container, response);
-            console.log('[MathTutorAI] Rendered structured TutorResponse');
-            return true;
-        } catch (error) {
-            console.warn('[MathTutorAI] Failed to render structured response:', error);
-            return false;
+            
+            // MathJax rendern
+            this.renderMathJax(feedbackContent);
         }
     }
 
     formatResponse(content) {
+        // DEBUG: Erweitere Formatierung für Mathematik-Inhalte mit LaTeX-Unterstützung
         let formattedContent = content;
         
-        // 1. LaTeX-Sanitierung anwenden (korrigiert Klammerfehler etc.)
-        if (typeof sanitizeApiResponse === 'function') {
-            formattedContent = sanitizeApiResponse(formattedContent);
-        }
+        console.log('=== DEBUG MATH FORMATTING ===');
+        console.log('1. Original content:', content);
         
-        // 2. Bereinige den Inhalt vor der Konvertierung
+        // Bereinige den Inhalt vor der Konvertierung
         formattedContent = this.cleanMathContent(formattedContent);
+        console.log('2. After cleaning:', formattedContent);
         
-        // 3. Konvertiere nur explizite mathematische Notationen zu LaTeX
+        // Konvertiere nur explizite mathematische Notationen zu LaTeX
         formattedContent = this.convertMathNotation(formattedContent);
+        console.log('3. After conversion:', formattedContent);
         
-        // 4. Standard-Formatierung
+        // Standard-Formatierung
         formattedContent = formattedContent
             .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
             .replace(/\*(.*?)\*/g, '<em>$1</em>')
             .replace(/\n\n/g, '</p><p>')
             .replace(/\n/g, '<br>')
             .replace(/^(.*)$/, '<p>$1</p>');
+        
+        console.log('4. Final formatted:', formattedContent);
+        console.log('=== END DEBUG ===');
         
         return formattedContent;
     }
@@ -3723,32 +4632,18 @@ Verwende eine klare Struktur und deutsche mathematische Terminologie.
     // User Profile Management
     loadUserProfile() {
         const savedProfile = localStorage.getItem('user_profile');
-        let profile = savedProfile ? JSON.parse(savedProfile) : this.getDefaultProfile();
-        
-        // Merge mit Backend-Benutzerdaten, falls vorhanden
-        if (window.currentUser) {
-            profile.name = window.currentUser.name || profile.name;
-            profile.email = window.currentUser.email || profile.email;
-            profile.birthDate = window.currentUser.birthDate || profile.birthDate;
-            
-            // Merge profileData und settings aus Backend
-            if (window.currentUser.profileData) {
-                profile = { ...profile, ...window.currentUser.profileData };
-            }
-            if (window.currentUser.settings) {
-                profile.settings = window.currentUser.settings;
-            }
+        if (savedProfile) {
+            const profile = JSON.parse(savedProfile);
+            this.populateProfileForm(profile);
+            return profile;
         }
-        
-        this.populateProfileForm(profile);
-        return profile;
+        return this.getDefaultProfile();
     }
 
     getDefaultProfile() {
         return {
             name: '',
             email: '',
-            birthDate: null,
             grade: 'abitur',
             learningGoal: 'abitur-prep',
             weakTopics: [],
@@ -4089,7 +4984,3 @@ if ('serviceWorker' in navigator) {
             });
     });
 }
-
-
-
-

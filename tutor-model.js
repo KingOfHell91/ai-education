@@ -139,8 +139,16 @@ function sanitizeStep(raw, fallbackIndex = 0) {
     if (typeof raw.comment === 'string') {
         step.comment = raw.comment;
     }
+    if (typeof raw.operation === 'string') {
+        step.operation = raw.operation;
+    }
     if (raw.meta && typeof raw.meta === 'object') {
         step.meta = raw.meta;
+    }
+
+    // Wende LaTeX-Sanitierung an falls verfügbar
+    if (step.latex && typeof window !== 'undefined' && window.LatexSanitizer) {
+        step.latex = window.LatexSanitizer.sanitizeLatex(step.latex);
     }
 
     // Leerer Step ohne latex ist ungültig
