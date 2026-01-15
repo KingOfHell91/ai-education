@@ -1754,6 +1754,25 @@ class MathTutorAI {
         document.getElementById('generate-btn').addEventListener('click', () => {
             this.generateTask();
         });
+        
+        // Random Generate Button
+        const randomGenBtn = document.getElementById('random-generate-btn');
+        if (randomGenBtn) {
+            randomGenBtn.addEventListener('click', () => {
+                this.generateRandomTask();
+            });
+        }
+        
+        // Reset Selection Button
+        const resetBtn = document.getElementById('reset-selection-btn');
+        if (resetBtn) {
+            resetBtn.addEventListener('click', () => {
+                this.resetTaskSelection();
+            });
+        }
+        
+        // Setup der erweiterten Task-Generierungs-UI
+        this.setupTaskGenerationUI();
 
         // Test Buttons
         const singleTestBtn = document.getElementById('run-single-test');
@@ -2288,52 +2307,20 @@ class MathTutorAI {
     }
 
     buildAbiPrompt(task) {
-        const variationInstruction = this.getAbiVariationInstruction();
-        const metadataParts = [];
-        if (task.year) metadataParts.push(`Jahrgang: ${task.year}`);
-        if (task.subject) metadataParts.push(`Schwerpunkt: ${task.subject}`);
-        if (task.tags && task.tags.length > 0) metadataParts.push(`Tags: ${task.tags.join(', ')}`);
-
-        const metadataSection = metadataParts.length > 0
-            ? `Metadaten: ${metadataParts.join(' | ')}`
-            : 'Metadaten: Keine zusätzlichen Angaben';
-
+        // Programmatische Variation aus task-variations.js
+        const variation = typeof window.generateTaskVariation === 'function' 
+            ? window.generateTaskVariation() 
+            : { instructions: this.getAbiVariationInstruction() };
+        
         const extractedText = task.pdfText
             ? this.truncateText(task.pdfText.trim(), 7000)
-            : 'Hinweis: Für diese Aufgabe konnte kein Text automatisch extrahiert werden. Bitte erstelle dennoch eine passende Variation basierend auf den bekannten Metadaten.';
+            : 'Keine Textextraktion verfügbar.';
 
-        const weakTopics = this.userProfile?.weakTopics || [];
-        const instructions = [
-            'Bewahre die mathematische Kernidee und den Schwierigkeitsgrad.',
-            'Passe Kontextdetails an (z.B. beteiligte Personen, reale Gegenstände, Szenario, erzählerische Elemente).',
-            'Du darfst Zahlenwerte geringfügig verändern (maximal ±15 %), sofern die Aufgabe konsistent bleibt.',
-            'Formuliere die neue Aufgabe klar in deutscher Sprache und nutze LaTeX für mathematische Ausdrücke wie üblich.',
-            'Gib ausschließlich die neue Aufgabenstellung aus – keine Lösungen, keine Hinweise, keine Erklärungen.',
-            'Struktur und Umfang sollen dem Original entsprechen.',
-            variationInstruction
-        ];
-
-        if (weakTopics.length > 0) {
-            instructions.push(`Berücksichtige, dass der Schüler zusätzlich an folgenden Themen arbeiten möchte: ${weakTopics.join(', ')}.`);
-        }
-
-        const instructionBlock = instructions
-            .map((instruction, index) => `${index + 1}. ${instruction}`)
-            .join('\n');
-
-        return `
-Du erhältst eine originale Abitur-Aufgabe aus Sachsen. Erstelle darauf basierend eine leicht variierte Abitur-Aufgabe, die weiterhin den offiziellen Anforderungen entspricht.
-
-WICHTIG:
-${instructionBlock}
-
-${metadataSection}
-
-ORIGINALTEXT DER AUFGABE (nur zur Analyse, NICHT unverändert übernehmen):
----
-${extractedText}
----
-`;
+        // ULTRA-KOMPAKTER PROMPT - Variationen werden programmatisch generiert
+        return `Variiere diese Abitur-Aufgabe:
+ORIGINAL: ${extractedText}
+ÄNDERUNGEN: ${variation.instructions}
+Bewahre mathematische Struktur. Gib NUR die neue Aufgabe aus, keine Lösung.`;
     }
 
     buildEvaluationPrompt({ userSolution, drawingInfo, hasDrawings }) {
@@ -2358,56 +2345,17 @@ ANWEISUNGEN:
     }
 
     /**
-     * Erzeugt minimale Fallback-Hints, falls das Modell keine Hints geliefert hat.
-     * - Level1: 1 Schlagwort zum ersten Fehler
-     * - Level2: Bis zu 2 schrittbezogene Hinweise
+     * Erzeugt Hints basierend auf der Analyse (delegiert an globale Funktion aus feedback-templates.js)
+     * @param {Array} steps - Die analysierten Schritte
+     * @returns {Object} - { level1: [], level2: [] }
      */
     generateFallbackHints(steps) {
-        const errorSteps = (steps || []).filter(s => s.errorType && s.errorType !== 'none');
-        const firstError = errorSteps[0];
-
-        const level1 = [];
-        if (firstError) {
-            const label = firstError.errorType === 'logic'
-                ? 'Falscher Ansatz'
-                : firstError.errorType === 'calc'
-                    ? 'Rechnung prüfen'
-                    : firstError.errorType === 'followup'
-                        ? 'Folgefehler'
-                        : 'Prüfe Schritt';
-            level1.push({
-                hintLevel: 1,
-                category: firstError.errorType === 'logic' ? 'wrong_method' : 'missing_step',
-                label,
-                color: firstError.errorType === 'logic' ? 'orange' : 'yellow'
-            });
+        // Nutze die umfangreiche Template-basierte Hint-Generierung
+        if (typeof window.generateHintsFromAnalysis === 'function') {
+            return window.generateHintsFromAnalysis({ steps });
         }
-
-        const level2 = [];
-        errorSteps.slice(0, 2).forEach(s => {
-            const title = s.errorType === 'logic'
-                ? 'Ansatz prüfen'
-                : s.errorType === 'calc'
-                    ? 'Vorzeichen/Division'
-                    : s.errorType === 'followup'
-                        ? 'Vorherigen Fehler fixen'
-                        : 'Form klären';
-            const color = s.errorType === 'calc' ? 'green' : 'blue';
-            const latex = sanitizeLatex(s.latex || s.rawText || '');
-            level2.push({
-                hintLevel: 2,
-                category: s.errorType === 'calc' ? 'formula_hint' : 'step_sequence',
-                stepIndex: s.index || 1,
-                title,
-                latex,
-                color
-            });
-        });
-
-        return {
-            level1,
-            level2
-        };
+        // Minimaler Fallback wenn Templates nicht geladen
+        return { level1: [], level2: [] };
     }
 
     /**
@@ -2466,41 +2414,18 @@ Schwierigkeit: ${difficulty}
 `;
         }
 
-        // OPTIMIERTER PROMPT - ~40% kürzer, gleiche Funktionalität
-        const systemPrompt = `Du bist eine erfahrene Mathelehrerin. Analysiere den Schüler-Lösungsweg und gib strukturiertes JSON zurück.
+        // ULTRA-KOMPAKTER PROMPT - Hints + Feedback werden programmatisch generiert
+        const systemPrompt = `Mathe-Fehleranalyse. Gib JSON zurück.
 
-KERNREGEL: Originaltext 1:1 beibehalten!
-- rawText = exakter Schülertext
-- latex = LaTeX-Formatierung des Schülertexts (FEHLER BEIBEHALTEN, nicht korrigieren!)
-- Wenn Schüler "x=5" schreibt (falsch), dann latex="x=5" - NIEMALS die richtige Lösung einsetzen!
+KERNREGEL: Schülertext 1:1 in LaTeX (Fehler beibehalten, NICHT korrigieren!)
 
 AUFGABEN:
-1. Rechenweg in Schritte zerlegen (je Schritt eine Umformung)
-2. Pro Schritt außer dem letzten: "operation" angeben (z.B. ":2", "+3", "zgf.")
-3. errorType setzen nach Priorität:
-   - "logic" (P1): Ansatz nicht zielführend
-   - "calc" (P2): Rechenfehler, Vorzeichenfehler
-   - "followup" (P3): Fehler nur wegen früherem Fehler
-   - "formal" (selten): nur Schreibweise unsauber
-   - "none": korrekt
+1. Schritte zerlegen (je Schritt eine Umformung)
+2. operation pro Schritt (außer letztem): z.B. ":2", "+3", "zgf."
+3. errorType: logic (P1) > calc (P2) > followup (P3) > formal > none
 
-HINTS (bei Fehlern):
-- level1: 1-3 Schlagwörter (kein stepIndex), color orange/yellow
-- level2: Titel + latex + stepIndex, color blue/green
-
-FEEDBACK:
-- feedback.summarySentence: 1-2 Sätze, motivierend, keine Lösung verraten
-- isCorrect: true wenn alle steps "none", sonst false
-- feedbackLevel: "minimal" (Standard), "detailed" nur wenn isCorrect=true UND attemptNumber>1
-
-Bei feedbackLevel="detailed":
-- comparison.mappings: [{wrongStepIndex, correctStepIndex, explanation}]
-- comparison.correctSteps: korrigierte Schritte
-- detailedFeedback: {strengths[], weaknesses[], tips[], encouragement}
-
-LATEX-REGELN:
-- Nur reiner LaTeX-Inhalt, KEINE Delimiter (\\(, $, etc.)
-- Keine \\color oder \\textcolor Befehle
+OUTPUT: {"steps":[{"index":1,"rawText":"...","latex":"...","errorType":"...","operation":"..."}],"isCorrect":true/false,"feedback":{"summarySentence":"1-2 Sätze"}}
+Nur reiner LaTeX (keine Delimiter).
 ${studentContextSection}${previousFeedbackSection}`;
 
         const userPrompt = `Aufgabe:
@@ -2546,19 +2471,8 @@ Achte darauf, bei jedem Schritt (außer dem letzten) das "operation"-Feld anzuge
             apiUrl = 'https://api.openai.com/v1/chat/completions';
             headers['Authorization'] = `Bearer ${this.apiKey}`;
             
-            // Kompakte Schema-Referenz
-            const schemaInstructions = `
-
-JSON-FORMAT (nur dieses Schema, keine anderen Texte):
-{
-  "steps": [{"index": 1, "rawText": "...", "latex": "...", "errorType": "none|logic|calc|followup|formal", "operation": "..."}],
-  "hints": {"level1": [{"hintLevel": 1, "category": "wrong_method|missing_step", "label": "...", "color": "orange|yellow"}], "level2": [{"hintLevel": 2, "category": "formula_hint|step_sequence", "stepIndex": 1, "title": "...", "latex": "...", "color": "blue|green"}]},
-  "isCorrect": true/false, "feedbackLevel": "minimal|detailed",
-  "feedback": {"summarySentence": "..."},
-  "uiElements": [],
-  "comparison": null, "detailedFeedback": null
-}
-comparison/detailedFeedback nur bei feedbackLevel="detailed" füllen.`;
+            // Minimale Schema-Referenz - Hints werden programmatisch generiert
+            const schemaInstructions = ``;
             
             requestBody = {
                 model: model,
@@ -2739,200 +2653,51 @@ comparison/detailedFeedback nur bei feedbackLevel="detailed" füllen.`;
 
     /**
      * Baut den Prompt für eine Folge-Analyse nach User-Korrekturen
+     * GEKÜRZT: Hints werden programmatisch generiert
      * @param {Object} params - Parameter
      * @returns {Object} - { systemPrompt, userPrompt }
      */
     buildFollowUpAnalysisPrompt({ originalSteps, userCorrections, previousAnalyses, attemptNumber, studentContext, previousHints }) {
         // Formatiere den ursprünglichen Lösungsweg
-        let originalSolutionText = 'URSPRÜNGLICHER LÖSUNGSWEG:\n';
+        let originalSolutionText = 'ORIGINAL:\n';
         originalSteps.forEach(step => {
-            const stepNum = step.index || step.stepNumber || '?';
-            const errorLabel = step.errorType && step.errorType !== 'none' 
-                ? ` [${step.errorType.toUpperCase()}]` 
-                : '';
-            originalSolutionText += `Schritt ${stepNum}${errorLabel}: ${step.rawText || step.latex}\n`;
+            const errorLabel = step.errorType && step.errorType !== 'none' ? ` [${step.errorType}]` : '';
+            originalSolutionText += `${step.index}${errorLabel}: ${step.rawText || step.latex}\n`;
         });
         
         // Formatiere die User-Korrekturen
-        let correctionsText = '\nKORREKTUREN DES SCHÜLERS:\n';
+        let correctionsText = '\nKORREKTUREN:\n';
         const correctionEntries = Object.entries(userCorrections);
         if (correctionEntries.length > 0) {
             correctionEntries.forEach(([stepIndex, correction]) => {
                 correctionsText += `Schritt ${stepIndex} NEU: ${correction}\n`;
             });
-        } else {
-            correctionsText += '(Keine Korrekturen eingegeben)\n';
-        }
-        
-        // Formatiere vorherige Analysen als Kontext
-        let previousAnalysesText = '';
-        if (previousAnalyses && previousAnalyses.length > 0) {
-            previousAnalysesText = '\n=== VORHERIGE LÖSUNGSVERSUCHE ===\n';
-            previousAnalyses.forEach((analysis, idx) => {
-                previousAnalysesText += `Versuch ${idx + 1}:\n`;
-                if (analysis.steps) {
-                    analysis.steps.forEach(step => {
-                        const errorLabel = step.errorType && step.errorType !== 'none' 
-                            ? ` [${step.errorType}]` 
-                            : ' [korrekt]';
-                        previousAnalysesText += `  ${step.index}. ${step.latex}${errorLabel}\n`;
-                    });
-                }
-                if (analysis.feedback && analysis.feedback.summarySentence) {
-                    previousAnalysesText += `  Feedback: ${analysis.feedback.summarySentence}\n`;
-                }
-                previousAnalysesText += '\n';
-            });
-        }
-        
-        // Formatiere vorherige Hints (für Überprüfung)
-        let previousHintsText = '';
-        if (previousHints && (previousHints.level1?.length > 0 || previousHints.level2?.length > 0)) {
-            previousHintsText = '\n=== VORHERIGE HINTS ===\n';
-            if (previousHints.level1 && previousHints.level1.length > 0) {
-                previousHintsText += 'Level 1 (Schlagwörter):\n';
-                previousHints.level1.forEach(h => {
-                    previousHintsText += `  - ${h.label} [${h.category}]\n`;
-                });
-            }
-            if (previousHints.level2 && previousHints.level2.length > 0) {
-                previousHintsText += 'Level 2 (Schrittbezogen):\n';
-                previousHints.level2.forEach(h => {
-                    previousHintsText += `  - Schritt ${h.stepIndex}: ${h.title} [${h.category}]\n`;
-                });
-            }
-            previousHintsText += '\nEntferne Hints zu Fehlern, die jetzt behoben sind.\n';
-        }
-        
-        // Schülerkontext
-        let studentContextSection = '';
-        if (studentContext) {
-            let strengthsText = '';
-            let weaknessesText = '';
-            if (studentContext.strongAreas?.topics?.length > 0) {
-                strengthsText = studentContext.strongAreas.topics.map(t => `${t.topic} (Level ${t.level}/5)`).join(', ');
-            }
-            if (studentContext.weakAreas?.topics?.length > 0) {
-                weaknessesText = studentContext.weakAreas.topics.map(t => `${t.topic} (Level ${t.level}/5)`).join(', ');
-            }
-            if (strengthsText || weaknessesText) {
-                studentContextSection = `\n=== SCHÜLERKONTEXT ===
-${strengthsText ? `Stärken: ${strengthsText}` : ''}
-${weaknessesText ? `Schwächen: ${weaknessesText}` : ''}
-`;
-            }
         }
 
-        const systemPrompt = `Du agierst wie eine empathische, erfahrene Mathelehrerin.
+        // ULTRA-KOMPAKTER PROMPT - Hints werden programmatisch generiert
+        const systemPrompt = `Folge-Analyse (Versuch ${attemptNumber}). Schüler hat Korrekturen eingereicht.
 
-Dies ist eine FOLGE-ANALYSE nach Korrekturen des Schülers (Versuch ${attemptNumber}).
+KERNREGEL: Schülertext 1:1 in LaTeX (Fehler beibehalten, NICHT korrigieren!)
 
-⚠️⚠️⚠️ KRITISCH - ORIGINALTEXT BEHALTEN ⚠️⚠️⚠️
-Du bist KEIN Korrektor! Du konvertierst NUR in LaTeX.
-Der Schüler muss seinen EIGENEN Fehler sehen!
+FOLGEFEHLER: Wenn korrigierter Schritt jetzt korrekt → Folgefehler werden "none" (wenn nur durch alten Fehler falsch).
 
-BEISPIEL (RICHTIG):
-- Schüler schreibt: "x = 5" (mathematisch falsch)
-- latex: "x = 5" (Fehler beibehalten!)
+OUTPUT: {"steps":[{"index":1,"rawText":"...","latex":"...","errorType":"...","operation":"..."}],"isCorrect":true/false,"feedback":{"summarySentence":"1-2 Sätze, ob Korrektur erfolgreich"}}
+Nur reiner LaTeX (keine Delimiter).`;
 
-BEISPIEL (VERBOTEN):
-- Schüler schreibt: "x = 5" (richtig wäre x = 3)
-- latex: "x = 3" ← VERBOTEN! Keine Korrektur!
-
-Der Schüler hat seinen vorherigen Lösungsweg überarbeitet und bestimmte Schritte korrigiert.
-Deine Aufgabe ist es:
-1. Die korrigierten Schritte zu überprüfen
-2. Folgefehler automatisch anzupassen, wenn der ursprüngliche Fehler behoben wurde
-3. Den neuen, vollständigen Lösungsweg zu bewerten
-
-WICHTIG - FOLGEFEHLER-BEHANDLUNG:
-- Wenn ein Schritt korrigiert wurde, der vorher einen Fehler hatte, prüfe ob die Korrektur korrekt ist
-- Wenn die Korrektur korrekt ist, passe alle FOLGEFEHLER automatisch an
-- Ein Folgefehler wird zu "none" (korrekt), wenn er nur aufgrund des ursprünglichen Fehlers falsch war
-- Wenn ein Folgefehler zusätzliche, unabhängige Fehler enthält, markiere diese entsprechend
-- Nicht korrigierte Schritte mit Fehlern bleiben unverändert markiert
-
-Deine Aufgaben (wie bei der Erst-Analyse):
-1. Rechenweg strukturieren - Alle Schritte auflisten (mit Korrekturen eingebaut)
-   - rawText = exakter Text des Schülers (NIEMALS korrigieren!)
-   - latex = LaTeX-Version des Schülertexts (NIEMALS korrigieren!)
-2. Logik prüfen (Priorität 1) - errorType: "logic"
-3. Rechnungen prüfen (Priorität 2) - errorType: "calc"  
-4. Folgefehler markieren (Priorität 3) - errorType: "followup"
-5. Formales nur selten - errorType: "formal"
-6. Gib bei jedem Schritt (außer dem letzten) das "operation"-Feld an
-7. Hints vorbereiten (wie in der Erst-Analyse):
-   - Stufe 1 (hints.level1): 1–3 Schlagwörter, keine stepIndex, Kategorien wrong_method oder missing_step.
-   - Stufe 2 (hints.level2): Schrittbezogene Hinweise mit stepIndex, Kategorien formula_hint oder step_sequence, inkl. latex ohne Delimiter.
-   - Farben: level1 orange/gelb, level2 blau/grün.
-   - Entferne Hints zu behobenen Fehlern (errorType jetzt "none").
-
-⚠️ LaTeX-Formatierung (KRITISCH) ⚠️
-Die Felder steps[].latex müssen REINEN LaTeX-Inhalt enthalten.
-
-KEINE DELIMITER im latex-Feld:
-- NIEMALS \\( oder \\) im latex-Feld verwenden!
-- NIEMALS $ oder $$ im latex-Feld verwenden!
-- Das Frontend fügt die Delimiter automatisch hinzu!
-
-RICHTIG: "latex": "x^2 + 2x - 3"
-FALSCH:  "latex": "\\\\( x^2 + 2x - 3 \\\\)"
-
-Keine losen Zeichen:
-- Keine losen Klammern
-- Brüche als \\\\frac{...}{...}
-
-KEINE Farben in LaTeX:
-- NIEMALS \\\\textcolor, \\\\color im latex-Feld!
-
-Kurzes Feedback (PFLICHT)
-- Gib im feedback.summarySentence eine kurze Rückmeldung (1-2 Sätze)
-- Erwähne ob die Korrekturen erfolgreich waren
-- Beispiele:
-  - "Gut korrigiert! Der Rechenfehler ist behoben und die Folgefehler wurden angepasst."
-  - "Die Korrektur in Schritt 2 ist richtig, aber in Schritt 4 ist noch ein unabhängiger Fehler."
-  - "Leider ist die Korrektur noch nicht korrekt. Prüfe nochmal die Umformung."
-
-Output-Format:
-- Gib NUR ein JSON-Objekt zurück
-- Keine Einleitung, keine Kommentare
-${studentContextSection}${previousAnalysesText}${previousHintsText}`;
-
-        const userPrompt = `Aufgabe:
-${this.currentTask}
-
-${originalSolutionText}
-${correctionsText}
-
-Analysiere den NEUEN Lösungsweg (mit eingebauten Korrekturen) und gib das Ergebnis als JSON zurück.
-Beachte: Wenn ein Fehler korrigiert wurde, passe die Folgefehler entsprechend an!`;
+        const userPrompt = `Aufgabe: ${this.currentTask}
+${originalSolutionText}${correctionsText}
+Analysiere den neuen Lösungsweg.`;
 
         return { systemPrompt, userPrompt };
     }
 
+    /**
+     * @deprecated - Hilfestellung wird jetzt programmatisch generiert, siehe generateHilfestellung()
+     * Diese Funktion bleibt aus Kompatibilitätsgründen erhalten, wird aber nicht mehr verwendet.
+     */
     buildHilfestellungPrompt() {
-        const evaluation = this.solutionState.lastCheckResponse || 'Es liegt noch kein detailliertes Feedback vor.';
-        const userSolution = this.solutionState.lastUserSolution || '(Keine schriftliche Lösung eingereicht.)';
-        return `
-Aufgabe:
-${this.currentTask}
-
-Lösung des Schülers (Originaltext):
-${userSolution}
-
-ANWEISUNGEN:
-1. Gib ausschließlich den Lösungsweg des Schülers erneut aus – gleiche Reihenfolge, identische Zeilenumbrüche.
-2. Erzeuge KEINEN zusätzlichen Text, keine Einleitung, keine Erklärungen, keine Tipps.
-3. Markiere nur die tatsächlich fehlerhaften Passagen. Korrekte Teile bleiben unverändert (keine \color-Anweisung).
-4. Nutze für Markierungen den LaTeX-Befehl \color{FARBE}{…}. Verwende exakt folgende Farben und umfasse stets die gesamte betroffene Passage:
-   - Grober Fehler (falsches Rechnen, Regelverstoß): \color{red}{…}
-   - Folgefehler (aus einem vorherigen Fehler entstanden): \color{yellow}{…}
-   - Grober Fehler mit Folgefehler kombiniert: \color{orange}{…}
-   - Form- oder Notationsfehler (z.B. falsches oder fehlendes Symbol): \color{blue}{…}
-   - Falsches Einsetzen oder ausgelassener notwendiger Zwischenschritt: \color{purple}{…}
-5. Bei Umformungen von Gleichungen gib jeden Zwischenschritt auf einer Zeile aus und verbinde sie mit einem = (z.B. \color{red}{falscher\_Term} = korrekter\_Term).
-6. Achte darauf, dass jede \color-Anweisung genau zwei geschweifte Klammern besitzt (keine leeren { }, keine offenen Klammern). Entferne überflüssige Backslashes.
-7. Am Ende darf ausschließlich der neu formatierte Lösungsweg stehen – keine Schlussbemerkung oder Hinweis.`;
+        console.warn('buildHilfestellungPrompt ist deprecated - nutze generateHilfestellung() stattdessen');
+        return '';
     }
 
     buildCorrectedSolutionPrompt() {
@@ -2993,15 +2758,12 @@ Wenn farbige Darstellung nicht möglich ist, behalte die Textlabels in eckigen K
     }
 
     getAbiVariationInstruction() {
-        const variations = [
-            'Verändere die Alltagssituation und die beteiligten Personen, ohne den mathematischen Aufbau zu verändern.',
-            'Passe die erzählte Geschichte an einen anderen Kontext (z.B. Naturwissenschaft, Wirtschaft, Sport) an, behalte jedoch die gleichen mathematischen Fragestellungen bei.',
-            'Ersetze reale Gegenstände in der Aufgabe durch andere Objekte mit ähnlichen Eigenschaften und passe Beschreibungen entsprechend an.',
-            'Ändere die Ausgangswerte minimal (höchstens um ±10 %) und schreibe die Texte so, dass die neuen Werte logisch zur Situation passen.',
-            'Formuliere die Aufgabe so um, dass sie sich an eine andere reale Situation (z.B. Berufsausbildung, Studium, Alltag) richtet, lasse aber die mathematischen Anforderungen identisch.'
-        ];
-        const index = Math.floor(Math.random() * variations.length);
-        return variations[index];
+        // Fallback wenn task-variations.js nicht geladen
+        if (typeof window.TASK_VARIATIONS !== 'undefined' && window.TASK_VARIATIONS.strategies) {
+            return window.pickRandom(window.TASK_VARIATIONS.strategies);
+        }
+        // Minimaler Fallback
+        return 'Ändere Kontext und Zahlen leicht.';
     }
 
     truncateText(text, maxLength) {
@@ -3197,45 +2959,321 @@ Wenn farbige Darstellung nicht möglich ist, behalte die Textlabels in eckigen K
         }
     }
 
-    async generateTask() {
+    // ==================== TASK GENERATION UI ====================
+    
+    /**
+     * Initialisiert die erweiterte Aufgabengenerierungs-UI
+     */
+    setupTaskGenerationUI() {
+        // Speichere die aktuelle Auswahl
+        this.taskGenerationState = {
+            topic: null,
+            subtopic: null,
+            taskType: null,
+            difficulty: null,
+            specialWishes: ''
+        };
+        
+        // Befülle das Themen-Dropdown aus topic-data.js
+        this.populateTopicDropdown();
+        
+        // Topic-Select Event
+        const topicSelect = document.getElementById('topic-select');
+        if (topicSelect) {
+            topicSelect.addEventListener('change', (e) => {
+                this.onTopicChange(e.target.value);
+            });
+        }
+        
+        // Subtopic-Select Event
+        const subtopicSelect = document.getElementById('subtopic-select');
+        if (subtopicSelect) {
+            subtopicSelect.addEventListener('change', (e) => {
+                this.taskGenerationState.subtopic = e.target.value || null;
+                this.updateSelectionPreview();
+            });
+        }
+        
+        // Special Wishes Input
+        const wishesInput = document.getElementById('special-wishes-input');
+        if (wishesInput) {
+            wishesInput.addEventListener('input', (e) => {
+                this.taskGenerationState.specialWishes = e.target.value;
+            });
+        }
+        
+        // Task Type Buttons
+        const typeButtons = document.querySelectorAll('.type-btn');
+        typeButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                // Toggle Auswahl
+                if (btn.classList.contains('active')) {
+                    btn.classList.remove('active');
+                    this.taskGenerationState.taskType = null;
+                } else {
+                    typeButtons.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    this.taskGenerationState.taskType = btn.dataset.type;
+                }
+                this.updateSelectionPreview();
+            });
+        });
+        
+        // Difficulty Buttons
+        const diffButtons = document.querySelectorAll('.difficulty-btn');
+        diffButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                // Toggle Auswahl
+                if (btn.classList.contains('active')) {
+                    btn.classList.remove('active');
+                    this.taskGenerationState.difficulty = null;
+                } else {
+                    diffButtons.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    this.taskGenerationState.difficulty = btn.dataset.difficulty;
+                }
+                this.updateSelectionPreview();
+            });
+        });
+        
+        // Initiale Preview
+        this.updateSelectionPreview();
+    }
+    
+    /**
+     * Befüllt das Themen-Dropdown aus topic-data.js
+     */
+    populateTopicDropdown() {
+        const topicSelect = document.getElementById('topic-select');
+        if (!topicSelect || typeof window.MATH_TOPICS === 'undefined') return;
+        
+        // Behalte die erste "Auswahl"-Option
+        const firstOption = topicSelect.querySelector('option');
+        topicSelect.innerHTML = '';
+        topicSelect.appendChild(firstOption);
+        
+        // Füge alle Themen hinzu
+        Object.entries(window.MATH_TOPICS).forEach(([id, topic]) => {
+            const option = document.createElement('option');
+            option.value = id;
+            option.textContent = topic.name;
+            topicSelect.appendChild(option);
+        });
+    }
+    
+    /**
+     * Handler für Themenänderung - zeigt Unterthemen an
+     */
+    onTopicChange(topicId) {
+        this.taskGenerationState.topic = topicId || null;
+        this.taskGenerationState.subtopic = null;
+        
+        const subtopicWrapper = document.getElementById('subtopic-wrapper');
+        const subtopicSelect = document.getElementById('subtopic-select');
+        
+        if (!subtopicWrapper || !subtopicSelect) return;
+        
+        if (!topicId || typeof window.MATH_TOPICS === 'undefined') {
+            // Verstecke Unterthemen
+            subtopicWrapper.classList.remove('visible');
+            return;
+        }
+        
+        const topic = window.MATH_TOPICS[topicId];
+        if (!topic || !topic.subtopics) {
+            subtopicWrapper.classList.remove('visible');
+            return;
+        }
+        
+        // Befülle Unterthemen
+        subtopicSelect.innerHTML = '<option value="">-- Optional: Unterthema wählen --</option>';
+        Object.entries(topic.subtopics).forEach(([id, name]) => {
+            const option = document.createElement('option');
+            option.value = id;
+            option.textContent = name;
+            subtopicSelect.appendChild(option);
+        });
+        
+        // Zeige Unterthemen mit Animation
+        subtopicWrapper.classList.add('visible');
+        this.updateSelectionPreview();
+    }
+    
+    /**
+     * Aktualisiert die Auswahl-Vorschau mit Chips
+     */
+    updateSelectionPreview() {
+        const chipsContainer = document.getElementById('selection-chips');
+        if (!chipsContainer) return;
+        
+        chipsContainer.innerHTML = '';
+        const state = this.taskGenerationState;
+        let hasSelection = false;
+        
+        // Thema Chip
+        if (state.topic && window.MATH_TOPICS) {
+            const topic = window.MATH_TOPICS[state.topic];
+            if (topic) {
+                const chip = this.createChip(topic.name, 'topic', topic.icon);
+                chipsContainer.appendChild(chip);
+                hasSelection = true;
+                
+                // Unterthema Chip
+                if (state.subtopic && topic.subtopics[state.subtopic]) {
+                    const subChip = this.createChip(topic.subtopics[state.subtopic], 'subtopic', 'fa-layer-group');
+                    chipsContainer.appendChild(subChip);
+                }
+            }
+        }
+        
+        // Aufgabentyp Chip
+        if (state.taskType && window.TASK_TYPES) {
+            const type = window.TASK_TYPES[state.taskType];
+            if (type) {
+                const chip = this.createChip(type.name, 'type', type.icon);
+                chipsContainer.appendChild(chip);
+                hasSelection = true;
+            }
+        }
+        
+        // Schwierigkeit Chip
+        if (state.difficulty && window.DIFFICULTY_LEVELS) {
+            const diff = window.DIFFICULTY_LEVELS[state.difficulty];
+            if (diff) {
+                const chip = this.createChip(diff.name, 'difficulty', diff.icon);
+                chip.style.borderColor = diff.color;
+                chipsContainer.appendChild(chip);
+                hasSelection = true;
+            }
+        }
+        
+        // Placeholder wenn keine Auswahl
+        if (!hasSelection) {
+            const placeholder = document.createElement('span');
+            placeholder.className = 'chip placeholder';
+            placeholder.innerHTML = '<i class="fas fa-dice"></i> Keine Auswahl - Zufällige Parameter';
+            chipsContainer.appendChild(placeholder);
+        }
+    }
+    
+    /**
+     * Erstellt einen Auswahl-Chip
+     */
+    createChip(text, type, icon) {
+        const chip = document.createElement('span');
+        chip.className = `chip chip-${type}`;
+        chip.innerHTML = `<i class="fas ${icon}"></i> ${text}`;
+        return chip;
+    }
+    
+    /**
+     * Setzt alle Auswahlen zurück
+     */
+    resetTaskSelection() {
+        // State zurücksetzen
+        this.taskGenerationState = {
+            topic: null,
+            subtopic: null,
+            taskType: null,
+            difficulty: null,
+            specialWishes: ''
+        };
+        
+        // UI zurücksetzen
+        const topicSelect = document.getElementById('topic-select');
+        if (topicSelect) topicSelect.value = '';
+        
+        const subtopicSelect = document.getElementById('subtopic-select');
+        if (subtopicSelect) subtopicSelect.value = '';
+        
+        const subtopicWrapper = document.getElementById('subtopic-wrapper');
+        if (subtopicWrapper) subtopicWrapper.classList.remove('visible');
+        
+        const wishesInput = document.getElementById('special-wishes-input');
+        if (wishesInput) wishesInput.value = '';
+        
+        document.querySelectorAll('.type-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.difficulty-btn').forEach(btn => btn.classList.remove('active'));
+        
+        this.updateSelectionPreview();
+    }
+    
+    /**
+     * Generiert eine komplett zufällige Aufgabe
+     */
+    async generateRandomTask() {
+        // Setze alle auf zufällig
+        this.resetTaskSelection();
+        
+        // Generiere mit zufälligen Parametern
+        await this.generateTask(true);
+    }
+
+    async generateTask(forceRandom = false) {
         if (!this.apiKey) {
             this.showNotification('Bitte konfiguriere zuerst deinen API-Schlüssel im Profil-Tab.', 'warning');
-            // Wechsle automatisch zum Profil-Tab
             document.querySelector('[data-tab="user-profile"]').click();
             return;
         }
 
         this.showLoading(true);
 
-        // Hole die ausgewählten Parameter
-        const topic = document.getElementById('topic-select').value;
-        const difficulty = document.getElementById('difficulty-select').value;
-        const taskType = document.getElementById('task-type-select').value;
+        // Hole Parameter aus State oder generiere zufällige
+        let state = this.taskGenerationState || {};
+        
+        // Zufällige Parameter für leere Felder
+        let topic = state.topic;
+        let subtopic = state.subtopic;
+        let taskType = state.taskType;
+        let difficulty = state.difficulty;
+        let specialWishes = state.specialWishes || '';
+        
+        // Nutze Zufallsfunktionen aus topic-data.js
+        if (!topic && typeof window.getRandomTopic === 'function') {
+            topic = window.getRandomTopic();
+        }
+        if (!subtopic && topic && typeof window.getRandomSubtopic === 'function') {
+            // 70% Chance auf Unterthema
+            if (Math.random() < 0.7) {
+                subtopic = window.getRandomSubtopic(topic);
+            }
+        }
+        if (!taskType && typeof window.getRandomTaskType === 'function') {
+            taskType = window.getRandomTaskType();
+        }
+        if (!difficulty && typeof window.getRandomDifficulty === 'function') {
+            difficulty = window.getRandomDifficulty();
+        }
+        
+        // Fallbacks
+        topic = topic || 'algebra';
+        taskType = taskType || 'berechnung';
+        difficulty = difficulty || 'fortgeschritten';
+        
+        // Namen für Prompt
+        const topicName = window.MATH_TOPICS?.[topic]?.name || topic;
+        const subtopicName = subtopic && window.MATH_TOPICS?.[topic]?.subtopics?.[subtopic] || null;
+        const taskTypeName = window.TASK_TYPES?.[taskType]?.name || taskType;
+        const difficultyName = window.DIFFICULTY_LEVELS?.[difficulty]?.name || difficulty;
+        
+        // Baue den Prompt
+        let topicText = topicName;
+        if (subtopicName) {
+            topicText += ` (${subtopicName})`;
+        }
+        
+        let prompt = `Erstelle eine Mathematik-Aufgabe mit folgenden Parametern:
+- Thema: ${topicText}
+- Schwierigkeit: ${difficultyName}
+- Aufgabentyp: ${taskTypeName}`;
+        
+        if (specialWishes) {
+            prompt += `\n- Spezielle Wünsche: ${specialWishes}`;
+        }
+        
+        prompt += `\n\nFormuliere die Aufgabe klar und präzise auf Deutsch. Verwende LaTeX für mathematische Ausdrücke ($..$ für inline, $$...$$ für display).`;
 
-        // Deutsche Übersetzungen für die Parameter
-        const topicNames = {
-            'functions': 'Funktionen',
-            'integration': 'Integration',
-            'geometry': 'Geometrie',
-            'algebra': 'Algebra',
-            'statistics': 'Statistik'
-        };
-
-        const difficultyNames = {
-            'easy': 'einfach',
-            'medium': 'mittel',
-            'hard': 'schwer'
-        };
-
-        const taskTypeNames = {
-            'conceptual': 'konzeptuelles Verständnis',
-            'word-problem': 'Textaufgabe',
-            'calculation': 'reine Berechnung'
-        };
-
-        const prompt = `Erstelle eine ${difficultyNames[difficulty]}e ${taskTypeNames[taskType]} zum Thema ${topicNames[topic]}.`;
-
-        console.log('Generiere Aufgabe mit:', { topic, difficulty, taskType, prompt });
+        console.log('Generiere Aufgabe mit:', { topic, subtopic, taskType, difficulty, specialWishes });
 
         // Start Performance Tracking
         if (this.performanceTracker) {
@@ -3244,20 +3282,15 @@ Wenn farbige Darstellung nicht möglich ist, behalte die Textlabels in eckigen K
 
         try {
             const response = await this.callAIAPI(prompt, 'generate', null, topic);
-            this.displayResults(response, true); // true = es ist eine Aufgabe
+            this.displayResults(response, true);
             
             // Store current task context
-            this.currentTaskContext = { topic, difficulty, taskType };
+            this.currentTaskContext = { topic, subtopic, taskType, difficulty };
         } catch (error) {
             console.error('Fehler bei der Aufgaben-Generierung:', error);
             
-            // Detaillierte Fehlermeldung
             let errorMessage = 'Fehler bei der Aufgaben-Generierung: ';
-            if (error.message) {
-                errorMessage += error.message;
-            } else {
-                errorMessage += 'Unbekannter Fehler. Bitte überprüfe deine API-Konfiguration.';
-            }
+            errorMessage += error.message || 'Unbekannter Fehler. Bitte überprüfe deine API-Konfiguration.';
             
             this.showNotification(errorMessage, 'error');
         } finally {
@@ -3620,6 +3653,21 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
                             placeholder="Gib hier deine Lösung ein oder beschreibe deinen Lösungsansatz..."
                             rows="6"
                         ></textarea>
+                    </div>
+                    
+                    <!-- Bild-Upload für Lösung -->
+                    <div class="solution-image-section">
+                        <label>
+                            <i class="fas fa-camera"></i>
+                            Oder lade ein Foto deiner Lösung hoch:
+                        </label>
+                        <div class="solution-upload-zone" id="solution-upload-zone">
+                            <i class="fas fa-cloud-upload-alt"></i>
+                            <p>Klicke hier oder ziehe ein Bild hierher</p>
+                            <p class="upload-hint">JPG, PNG (max. 3 Bilder)</p>
+                            <input type="file" id="solution-image-input" accept="image/*" hidden multiple>
+                        </div>
+                        <div class="solution-image-preview" id="solution-image-preview"></div>
                     </div>
                     
                     <!-- Toggle Button für Skizzen -->
@@ -4419,8 +4467,134 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
                 }
             });
         }
+        
+        // Solution Image Upload Setup
+        this.setupSolutionImageUpload();
 
         this.updateSolutionActionButtons();
+    }
+    
+    /**
+     * Richtet den Bild-Upload für Lösungen ein
+     */
+    setupSolutionImageUpload() {
+        const uploadZone = document.getElementById('solution-upload-zone');
+        const imageInput = document.getElementById('solution-image-input');
+        const previewContainer = document.getElementById('solution-image-preview');
+        
+        if (!uploadZone || !imageInput || !previewContainer) return;
+        
+        // Initialisiere Array für Lösungsbilder
+        this.solutionImages = [];
+        
+        // Click to upload
+        uploadZone.addEventListener('click', () => {
+            imageInput.click();
+        });
+        
+        // Drag and drop
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('drag-over');
+        });
+        
+        uploadZone.addEventListener('dragleave', () => {
+            uploadZone.classList.remove('drag-over');
+        });
+        
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('drag-over');
+            if (e.dataTransfer.files.length > 0) {
+                this.handleSolutionImageUpload(Array.from(e.dataTransfer.files));
+            }
+        });
+        
+        // File input change
+        imageInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                this.handleSolutionImageUpload(Array.from(e.target.files));
+            }
+        });
+    }
+    
+    /**
+     * Verarbeitet hochgeladene Lösungsbilder
+     */
+    handleSolutionImageUpload(files) {
+        const previewContainer = document.getElementById('solution-image-preview');
+        const maxImages = 3;
+        
+        if (!previewContainer) return;
+        
+        const validFiles = files.filter(file => file.type.startsWith('image/'));
+        
+        if (validFiles.length === 0) {
+            this.showNotification('Bitte wähle gültige Bilddateien aus.', 'warning');
+            return;
+        }
+        
+        // Prüfe Maximum
+        if (this.solutionImages.length + validFiles.length > maxImages) {
+            this.showNotification(`Maximal ${maxImages} Bilder erlaubt.`, 'warning');
+            return;
+        }
+        
+        validFiles.forEach(file => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const imageData = {
+                    name: file.name,
+                    type: file.type,
+                    dataUrl: e.target.result
+                };
+                
+                this.solutionImages.push(imageData);
+                this.renderSolutionImagePreview();
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+    
+    /**
+     * Rendert die Vorschau der Lösungsbilder
+     */
+    renderSolutionImagePreview() {
+        const previewContainer = document.getElementById('solution-image-preview');
+        const uploadZone = document.getElementById('solution-upload-zone');
+        
+        if (!previewContainer) return;
+        
+        if (this.solutionImages.length === 0) {
+            previewContainer.innerHTML = '';
+            previewContainer.style.display = 'none';
+            if (uploadZone) uploadZone.style.display = 'flex';
+            return;
+        }
+        
+        previewContainer.style.display = 'flex';
+        if (uploadZone && this.solutionImages.length >= 3) {
+            uploadZone.style.display = 'none';
+        }
+        
+        previewContainer.innerHTML = this.solutionImages.map((img, idx) => `
+            <div class="solution-image-item">
+                <img src="${img.dataUrl}" alt="${img.name}">
+                <button class="remove-solution-image" data-index="${idx}" title="Bild entfernen">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        `).join('');
+        
+        // Remove Button Events
+        previewContainer.querySelectorAll('.remove-solution-image').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const idx = parseInt(btn.dataset.index);
+                this.solutionImages.splice(idx, 1);
+                this.renderSolutionImagePreview();
+            });
+        });
     }
 
     async submitSolution() {
@@ -4433,13 +4607,17 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
         // Hole Zeichnungen
         const canvasImages = this.getCanvasImages();
         
+        // Hole Lösungsbilder (hochgeladene Fotos)
+        const solutionImages = this.solutionImages || [];
+        const hasSolutionImages = solutionImages.length > 0;
+        
         // Prüfe ob Korrekturen vorhanden sind
         const hasCorrections = this.stepCorrections && Object.keys(this.stepCorrections).length > 0;
         const hasLastAnalysis = this.solutionState.lastAnalysis && this.solutionState.lastAnalysis.steps;
         
         // Bei Korrekturen brauchen wir keine neue Lösung im Textfeld
-        if (!hasCorrections && !userSolution && canvasImages.length === 0) {
-            this.showNotification('Bitte gib eine Lösung ein oder erstelle eine Zeichnung.', 'warning');
+        if (!hasCorrections && !userSolution && canvasImages.length === 0 && !hasSolutionImages) {
+            this.showNotification('Bitte gib eine Lösung ein, erstelle eine Zeichnung oder lade ein Foto hoch.', 'warning');
             return;
         }
         
@@ -5253,53 +5431,14 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
                 });
             }
 
-            const systemPrompt = `Du bist ein erfahrener Mathematik-Tutor. Der Schüler hat mehrere Versuche unternommen, die Aufgabe zu lösen, aber es nicht geschafft. Jetzt zeigst du ihm die Lösung mit ausführlicher Erklärung.
+            // GEKÜRZTER PROMPT - Feedback wird programmatisch aus Templates generiert
+            const systemPrompt = `Erstelle Musterlösung für diese Mathe-Aufgabe als JSON:
+{"steps":[{"index":1,"latex":"...","operation":"..."}],"comparison":{"mappings":[{"wrongStepIndex":1,"correctStepIndex":1,"explanation":"..."}],"correctSteps":[...]},"feedback":{"summarySentence":"..."},"isCorrect":false}
+Nur reiner LaTeX-Inhalt (keine Delimiter). Vergleiche mit dem fehlerhaften Lösungsweg.`;
 
-Deine Aufgabe:
-1. Erstelle die korrekte Musterlösung Schritt für Schritt
-2. Vergleiche jeden Schritt mit dem fehlerhaften Lösungsweg des Schülers
-3. Erkläre genau, wo und warum der Schüler Fehler gemacht hat
-4. Gib konstruktives, ausführliches Feedback mit Merksätzen
-
-⚠️ LaTeX-Formatierung (KRITISCH) ⚠️
-Alle latex-Felder müssen REINEN LaTeX-Inhalt enthalten:
-- NIEMALS \\( oder \\) verwenden!
-- NIEMALS $ oder $$ verwenden!
-- Das Frontend fügt Delimiter automatisch hinzu!
-- RICHTIG: "latex": "x^2 + 2x - 3"
-- FALSCH: "latex": "\\\\(x^2 + 2x - 3\\\\)"
-
-Du gibst ein JSON-Objekt zurück mit:
-{
-  "steps": [...], // Die korrekten Schritte (Musterlösung)
-  "comparison": {
-    "mappings": [
-      { "wrongStepIndex": 1, "correctStepIndex": 1, "explanation": "Erklärung des Unterschieds" }
-    ],
-    "correctSteps": [...] // Gleich wie steps
-  },
-  "detailedFeedback": {
-    "strengths": ["Was hat der Schüler gut gemacht?"],
-    "weaknesses": ["Welche Fehlerquellen wurden identifiziert?"],
-    "tips": ["Merksätze für die Zukunft"],
-    "encouragement": "Motivierender Abschluss - empfehle nächstes Mal selbst zu versuchen"
-  },
-  "isCorrect": false,
-  "feedbackLevel": "detailed",
-  "hints": { "level1": [], "level2": [] },
-  "uiElements": [],
-  "feedback": { "summarySentence": "Kurze Zusammenfassung" }
-}
-
-Gib NUR dieses JSON zurück, keine anderen Texte.`;
-
-            const userPrompt = `Aufgabe:
-${this.currentTask}
-
-${previousAttemptsText}
+            const userPrompt = `Aufgabe: ${this.currentTask}
 ${currentAttemptText}
-
-Erstelle die Musterlösung und erkläre die Fehler des Schülers.`;
+Erstelle die Musterlösung.`;
 
             // Verwende callErrorAnalysisAPI für strukturierte JSON-Ausgabe
             const prompts = { systemPrompt, userPrompt };
@@ -5312,6 +5451,16 @@ Erstelle die Musterlösung und erkläre die Fehler des Schülers.`;
             if (solutionData.comparison && solutionData.comparison.correctSteps) {
                 solutionData.comparison.correctSteps = solutionData.comparison.correctSteps.map(step => sanitizeStepLatex(step));
             }
+            
+            // Generiere detailedFeedback programmatisch aus Templates
+            const topic = this.currentTaskContext?.topic || 'algebra';
+            if (typeof window.generateDetailedFeedback === 'function') {
+                solutionData.detailedFeedback = window.generateDetailedFeedback(lastAnalysis, topic);
+            }
+            solutionData.feedbackLevel = 'detailed';
+            solutionData.isCorrect = false;
+            solutionData.hints = { level1: [], level2: [] };
+            solutionData.uiElements = [];
 
             // Speichere die Level-3-Daten
             this.solutionState.level3Data = solutionData;
@@ -5523,6 +5672,10 @@ Erstelle die Musterlösung und erkläre die Fehler des Schülers.`;
         }
     }
 
+    /**
+     * Generiert die Hilfestellung programmatisch - KEIN API-CALL mehr!
+     * Die Markierung erfolgt basierend auf der letzten Analyse.
+     */
     async requestHilfestellung() {
         if (this.solutionState.lastWasCorrect === null) {
             this.showNotification('Bitte reiche zuerst eine Lösung ein, damit Hilfestellungen erzeugt werden können.', 'info');
@@ -5534,32 +5687,61 @@ Erstelle die Musterlösung und erkläre die Fehler des Schülers.`;
             return;
         }
 
-        if (!this.solutionState.lastUserSolution) {
-            this.showNotification('Bitte gib einen schriftlichen Lösungsweg ein, damit wir ihn markieren können.', 'warning');
+        if (!this.solutionState.lastAnalysis || !this.solutionState.lastAnalysis.steps) {
+            this.showNotification('Keine Analyse verfügbar. Prüfe zuerst deine Lösung.', 'info');
             return;
         }
 
-        if (!this.solutionState.hilfestellungEligible) {
-            this.showNotification('Hilfestellung ist aktuell nicht verfügbar. Prüfe zuerst deine Lösung.', 'info');
-            return;
-        }
-
-        this.showLoading(true);
-
-        try {
-            const prompt = this.buildHilfestellungPrompt();
-            const response = await this.callAIAPI(prompt, 'hilfestellung', null, this.currentTaskContext?.topic);
-            this.solutionState.hilfestellungProvided = true;
-            this.solutionState.hilfestellungContent = response;
-            this.solutionState.correctedProvided = false;
-            this.displayFeedback(response);
-        } catch (error) {
-            console.error('Fehler bei der Hilfestellung:', error);
-            this.showNotification('Hilfestellung konnte nicht erstellt werden: ' + error.message, 'error');
-        } finally {
-            this.showLoading(false);
-            this.updateSolutionActionButtons();
-        }
+        // PROGRAMMATISCHE HILFESTELLUNG - KEIN API-CALL!
+        const markedSteps = this.generateHilfestellung(this.solutionState.lastAnalysis);
+        
+        // Formatiere als LaTeX mit Farbmarkierungen
+        let response = markedSteps.map(step => {
+            const latex = step.latex || step.rawText || '';
+            if (step.marked && step.displayClass) {
+                // Farbe basierend auf errorType
+                const colorMap = {
+                    'error-logic': 'red',
+                    'error-calc': 'orange', 
+                    'error-followup': 'yellow',
+                    'error-formal': 'blue'
+                };
+                const color = colorMap[step.displayClass] || 'red';
+                return `\\color{${color}}{${latex}}`;
+            }
+            return latex;
+        }).join(' \\\\ ');
+        
+        this.solutionState.hilfestellungProvided = true;
+        this.solutionState.hilfestellungContent = response;
+        this.solutionState.correctedProvided = false;
+        this.displayFeedback(response);
+        this.updateSolutionActionButtons();
+    }
+    
+    /**
+     * Generiert Hilfestellung (Markierung) programmatisch aus der Analyse
+     * @param {Object} analysis - Die letzte Analyse
+     * @returns {Array} - Schritte mit Markierungsinformation
+     */
+    generateHilfestellung(analysis) {
+        if (!analysis || !analysis.steps) return [];
+        
+        return analysis.steps.map(step => {
+            const colorClass = {
+                'logic': 'error-logic',
+                'calc': 'error-calc',
+                'followup': 'error-followup',
+                'formal': 'error-formal',
+                'none': ''
+            }[step.errorType || 'none'];
+            
+            return {
+                ...step,
+                displayClass: colorClass,
+                marked: step.errorType && step.errorType !== 'none'
+            };
+        });
     }
 
     async requestCorrectedSolution() {

@@ -62,6 +62,11 @@
     
     <!-- Test-Daten für Unit Tests -->
     <script src="test-data.js"></script>
+    
+    <!-- Programmatische Variationen und Templates -->
+    <script src="task-variations.js"></script>
+    <script src="feedback-templates.js"></script>
+    <script src="topic-data.js"></script>
 </head>
 <body class="sidebar-open">
     <!-- Auth Check Script (muss vor dem Rest laden) -->
@@ -369,36 +374,115 @@
                             <p>Lass die KI eine personalisierte Mathematik-Aufgabe für dich erstellen:</p>
                         </div>
                         <div class="task-generation-form">
-                            <div class="form-group">
-                                <label for="topic-select">Thema:</label>
-                                <select id="topic-select">
-                                    <option value="functions">Funktionen</option>
-                                    <option value="integration">Integration</option>
-                                    <option value="geometry">Geometrie</option>
-                                    <option value="algebra">Algebra</option>
-                                    <option value="statistics">Statistik</option>
-                                </select>
+                            <!-- Themenauswahl mit Unterthemen -->
+                            <div class="form-group topic-selection">
+                                <label for="topic-select">
+                                    <i class="fas fa-book"></i> Thema:
+                                </label>
+                                <div class="topic-select-wrapper">
+                                    <select id="topic-select" class="topic-dropdown">
+                                        <option value="">-- Thema wählen (oder Zufall) --</option>
+                                        <!-- Wird dynamisch aus topic-data.js befüllt -->
+                                    </select>
+                                    <i class="fas fa-chevron-down dropdown-icon"></i>
+                                </div>
+                                
+                                <!-- Dynamisches Unterthemen-Dropdown -->
+                                <div class="subtopic-wrapper" id="subtopic-wrapper">
+                                    <label for="subtopic-select">
+                                        <i class="fas fa-layer-group"></i> Unterthema:
+                                    </label>
+                                    <div class="topic-select-wrapper">
+                                        <select id="subtopic-select" class="subtopic-dropdown">
+                                            <option value="">-- Optional: Unterthema wählen --</option>
+                                        </select>
+                                        <i class="fas fa-chevron-down dropdown-icon"></i>
+                                    </div>
+                                </div>
                             </div>
-                            <div class="form-group">
-                                <label for="difficulty-select">Schwierigkeit:</label>
-                                <select id="difficulty-select">
-                                    <option value="easy">Einfach</option>
-                                    <option value="medium">Mittel</option>
-                                    <option value="hard">Schwer</option>
-                                </select>
+                            
+                            <!-- Spezielle Wünsche -->
+                            <div class="form-group special-wishes">
+                                <label for="special-wishes-input">
+                                    <i class="fas fa-star"></i> Spezielle Wünsche (optional):
+                                </label>
+                                <input type="text" id="special-wishes-input" 
+                                       placeholder="z.B. 'mit Brüchen', 'ohne Taschenrechner', 'Anwendung Physik'..."
+                                       class="wishes-input">
                             </div>
-                            <div class="form-group">
-                                <label for="task-type-select">Aufgabentyp:</label>
-                                <select id="task-type-select">
-                                    <option value="conceptual">Konzeptuelles Verständnis</option>
-                                    <option value="word-problem">Textaufgabe</option>
-                                    <option value="calculation">Reine Berechnung</option>
-                                </select>
+                            
+                            <!-- Aufgabentyp -->
+                            <div class="form-group task-type-selection">
+                                <label>
+                                    <i class="fas fa-tasks"></i> Aufgabentyp:
+                                </label>
+                                <div class="task-type-buttons" id="task-type-buttons">
+                                    <button type="button" class="type-btn" data-type="berechnung" title="Mathematische Aufgabe ohne Textkontext">
+                                        <i class="fas fa-calculator"></i>
+                                        <span>Berechnung</span>
+                                    </button>
+                                    <button type="button" class="type-btn" data-type="theorie" title="Erkläre, beweise oder definiere">
+                                        <i class="fas fa-book"></i>
+                                        <span>Theorie</span>
+                                    </button>
+                                    <button type="button" class="type-btn" data-type="sachaufgabe" title="Textaufgabe mit realem Kontext">
+                                        <i class="fas fa-scroll"></i>
+                                        <span>Sachaufgabe</span>
+                                    </button>
+                                </div>
                             </div>
-                            <button class="btn btn-primary" id="generate-btn">
-                                <i class="fas fa-magic"></i>
-                                Aufgabe generieren
-                            </button>
+                            
+                            <!-- Schwierigkeit -->
+                            <div class="form-group difficulty-selection">
+                                <label>
+                                    <i class="fas fa-signal"></i> Schwierigkeit:
+                                </label>
+                                <div class="difficulty-buttons" id="difficulty-buttons">
+                                    <button type="button" class="difficulty-btn" data-difficulty="einsteiger" title="Grundlagen, einfache Zahlen">
+                                        <i class="fas fa-seedling"></i>
+                                        <span>Einsteiger</span>
+                                    </button>
+                                    <button type="button" class="difficulty-btn" data-difficulty="fortgeschritten" title="Standard-Schulaufgaben">
+                                        <i class="fas fa-graduation-cap"></i>
+                                        <span>Fortgeschritten</span>
+                                    </button>
+                                    <button type="button" class="difficulty-btn" data-difficulty="anspruchsvoll" title="Komplexere Zusammenhänge">
+                                        <i class="fas fa-brain"></i>
+                                        <span>Anspruchsvoll</span>
+                                    </button>
+                                    <button type="button" class="difficulty-btn" data-difficulty="experte" title="Abitur-Niveau">
+                                        <i class="fas fa-award"></i>
+                                        <span>Experte</span>
+                                    </button>
+                                    <button type="button" class="difficulty-btn" data-difficulty="olympiade" title="Wettbewerbsaufgaben">
+                                        <i class="fas fa-trophy"></i>
+                                        <span>Olympiade</span>
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- Aktuelle Auswahl Anzeige -->
+                            <div class="selection-preview" id="selection-preview">
+                                <span class="preview-label">Auswahl:</span>
+                                <div class="selection-chips" id="selection-chips">
+                                    <span class="chip placeholder">Keine Auswahl - Zufällige Parameter</span>
+                                </div>
+                            </div>
+                            
+                            <!-- Buttons -->
+                            <div class="generation-buttons">
+                                <button class="btn btn-primary" id="generate-btn">
+                                    <i class="fas fa-magic"></i>
+                                    Aufgabe generieren
+                                </button>
+                                <button class="btn btn-accent" id="random-generate-btn" title="Alle Parameter zufällig">
+                                    <i class="fas fa-dice"></i>
+                                    Zufällige Aufgabe
+                                </button>
+                                <button class="btn btn-ghost" id="reset-selection-btn" title="Auswahl zurücksetzen">
+                                    <i class="fas fa-undo"></i>
+                                </button>
+                            </div>
                         </div>
                         
                         <!-- Feature Tests Section -->
