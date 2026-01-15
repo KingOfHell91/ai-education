@@ -316,20 +316,30 @@
                     <div class="input-container">
                         <div class="input-header">
                             <h3>Bild hochladen</h3>
-                            <p>Lade ein Bild deiner Mathematik-Aufgabe hoch:</p>
+                            <p>Lade Fotos deiner handgeschriebenen Lösung oder Mathematik-Aufgabe hoch:</p>
                         </div>
                         <div class="image-upload-area">
                             <div class="upload-zone" id="upload-zone">
                                 <i class="fas fa-cloud-upload-alt"></i>
-                                    <p class="upload-hint">Klicke hier oder ziehe ein Bild hierher</p>
-                                    <input type="file" id="image-input" accept="image/*" hidden multiple>
+                                <p class="upload-hint">Klicke hier oder ziehe Bilder hierher</p>
+                                <p class="upload-subhint">Unterstützt: JPG, PNG, GIF (mehrere Bilder möglich)</p>
+                                <input type="file" id="image-input" accept="image/*" hidden multiple>
                             </div>
                             <div class="image-preview" id="image-preview" style="display: none;">
-                                    <div class="preview-list" id="image-preview-list"></div>
-                                    <button class="btn btn-danger btn-sm" id="remove-all-images">
-                                    <i class="fas fa-times"></i>
-                                        Alle entfernen
-                                </button>
+                                <div class="preview-header">
+                                    <span class="preview-count" id="preview-count">0 Bilder</span>
+                                    <div class="preview-actions">
+                                        <button class="btn btn-secondary btn-sm" id="add-more-images">
+                                            <i class="fas fa-plus"></i>
+                                            Weitere hinzufügen
+                                        </button>
+                                        <button class="btn btn-danger btn-sm" id="remove-all-images">
+                                            <i class="fas fa-trash"></i>
+                                            Alle entfernen
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="preview-list" id="image-preview-list"></div>
                             </div>
                         </div>
                         <div class="image-description-area" id="image-description-area" style="display: none;">
@@ -395,6 +405,14 @@
                         <div class="test-section">
                             <h4><i class="fas fa-flask"></i> Feature-Tests</h4>
                             <p class="test-description">Teste die Fehleranalyse mit vordefinierten Aufgaben und Lösungswegen.</p>
+                            <div class="test-options">
+                                <label for="test-solution-type">Lösungsart:</label>
+                                <select id="test-solution-type" class="select-input">
+                                    <option value="incorrect">Fehlerhafte Lösung</option>
+                                    <option value="correct">Korrekte Lösung</option>
+                                    <option value="random">Zufällig</option>
+                                </select>
+                            </div>
                             <div class="test-buttons">
                                 <button class="btn btn-secondary" id="run-single-test">
                                     <i class="fas fa-vial"></i>

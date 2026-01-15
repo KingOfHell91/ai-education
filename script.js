@@ -61,7 +61,7 @@ const ERROR_ANALYSIS_SCHEMA = {
                         },
                         color: { 
                             type: "string",
-                            enum: ["red", "green", "orange", "blue"],
+                            enum: ["red", "green", "orange", "blue", "yellow"],
                             description: "Farbe: red=Logikfehler, green=Rechenfehler, orange=Folgefehler, blue=formal"
                         },
                         title: { 
@@ -90,9 +90,128 @@ const ERROR_ANALYSIS_SCHEMA = {
                 additionalProperties: false
             }
         },
-        required: ["steps", "uiElements", "feedback"],
+        required: ["steps", "uiElements", "feedback", "hints"],
         additionalProperties: false
     }
+};
+
+// Hint-Struktur für integrierte Hint-Stufe 1 und 2
+ERROR_ANALYSIS_SCHEMA.schema.properties.hints = {
+    type: "object",
+    description: "Vorbereitete Hints, die erst im Frontend sichtbar gemacht werden",
+    properties: {
+        level1: {
+            type: "array",
+            description: "Stufe-1-Hints: 1-3 Schlagwörter, global sichtbar",
+            items: {
+                type: "object",
+                properties: {
+                    hintLevel: { type: "number", enum: [1] },
+                    category: { type: "string", enum: ["wrong_method", "missing_step"] },
+                    label: { type: "string", description: "1-3 prägnante Schlagwörter" },
+                    color: { type: "string", enum: ["orange", "yellow"] }
+                },
+                required: ["hintLevel", "category", "label", "color"],
+                additionalProperties: false
+            }
+        },
+        level2: {
+            type: "array",
+            description: "Stufe-2-Hints: Schrittbezogene Hinweise/Formeln",
+            items: {
+                type: "object",
+                properties: {
+                    hintLevel: { type: "number", enum: [2] },
+                    category: { type: "string", enum: ["formula_hint", "step_sequence"] },
+                    stepIndex: { type: "number", description: "Bezug auf steps[index]" },
+                    title: { type: "string", description: "2-4 Wörter, z.B. 'Kardano-Formel'" },
+                    latex: { type: "string", description: "LaTeX ohne Delimiter" },
+                    color: { type: "string", enum: ["blue", "green"] }
+                },
+                required: ["hintLevel", "category", "stepIndex", "title", "latex", "color"],
+                additionalProperties: false
+            }
+        }
+    },
+    required: ["level1", "level2"],
+    additionalProperties: false
+};
+
+// Erweiterte Felder für korrekte Lösungen und Vergleichsmodus
+ERROR_ANALYSIS_SCHEMA.schema.properties.isCorrect = {
+    type: "boolean",
+    description: "true wenn alle Schritte errorType 'none' haben"
+};
+
+ERROR_ANALYSIS_SCHEMA.schema.properties.feedbackLevel = {
+    type: "string",
+    enum: ["minimal", "detailed"],
+    description: "minimal = 1-2 Sätze bei sofort korrekt, detailed = ausführlich bei Korrektur nach Fehlern"
+};
+
+ERROR_ANALYSIS_SCHEMA.schema.properties.comparison = {
+    type: "object",
+    description: "Vergleichsansicht zwischen falschem und korrektem Lösungsweg (nur bei Korrektur nach Fehlern oder Level 3)",
+    properties: {
+        mappings: {
+            type: "array",
+            description: "Semantische Zuordnung der Schritte",
+            items: {
+                type: "object",
+                properties: {
+                    wrongStepIndex: { type: "number", description: "Index des fehlerhaften Schritts" },
+                    correctStepIndex: { type: "number", description: "Index des korrekten Schritts" },
+                    explanation: { type: "string", description: "Erklärung des Unterschieds" }
+                },
+                required: ["wrongStepIndex", "correctStepIndex", "explanation"],
+                additionalProperties: false
+            }
+        },
+        correctSteps: {
+            type: "array",
+            description: "Die korrekten Schritte (Musterlösung)",
+            items: {
+                type: "object",
+                properties: {
+                    index: { type: "number" },
+                    latex: { type: "string", description: "LaTeX ohne Delimiter" },
+                    operation: { type: "string" }
+                },
+                required: ["index", "latex"],
+                additionalProperties: false
+            }
+        }
+    },
+    required: ["mappings", "correctSteps"],
+    additionalProperties: false
+};
+
+ERROR_ANALYSIS_SCHEMA.schema.properties.detailedFeedback = {
+    type: "object",
+    description: "Ausführliches Feedback bei Korrektur nach Fehlern oder Level 3",
+    properties: {
+        strengths: {
+            type: "array",
+            description: "Was gut war am Lösungsweg",
+            items: { type: "string" }
+        },
+        weaknesses: {
+            type: "array",
+            description: "Identifizierte Schwächen/Fehlerquellen",
+            items: { type: "string" }
+        },
+        tips: {
+            type: "array",
+            description: "Merksätze und Empfehlungen für die Zukunft",
+            items: { type: "string" }
+        },
+        encouragement: {
+            type: "string",
+            description: "Motivierender Abschluss"
+        }
+    },
+    required: ["strengths", "weaknesses", "tips", "encouragement"],
+    additionalProperties: false
 };
 
 // Mapping von errorType zu Farben für uiElements
@@ -878,10 +997,10 @@ class TestManager {
     
     /**
      * Führt einen einzelnen Test mit zufälliger Aufgabe aus
-     * @param {boolean} forceIncorrect - null=zufällig, true=fehlerhaft, false=korrekt
+     * Liest die Lösungsart aus dem UI-Dropdown
      * @returns {Promise<Object>} Test-Ergebnis
      */
-    async runSingleTest(forceIncorrect = null) {
+    async runSingleTest() {
         if (this.isRunning) {
             console.warn('[TestManager] Test läuft bereits');
             return null;
@@ -897,7 +1016,17 @@ class TestManager {
             return null;
         }
         
+        // Lösungsart aus UI-Dropdown lesen
+        const solutionTypeSelect = document.getElementById('test-solution-type');
+        let forceIncorrect = null; // zufällig
+        if (solutionTypeSelect) {
+            if (solutionTypeSelect.value === 'incorrect') forceIncorrect = true;
+            else if (solutionTypeSelect.value === 'correct') forceIncorrect = false;
+            // 'random' bleibt null
+        }
+        
         this.isRunning = true;
+        this.tutor.isTestMode = true;  // Test-Modus aktivieren
         this.tutor.showLoading(true);
         
         try {
@@ -908,7 +1037,8 @@ class TestManager {
             console.log('[TestManager] Starte Test:', {
                 taskId: task.id,
                 isCorrect: solution.isCorrect,
-                expectedErrors: solution.expectedErrors
+                expectedErrors: solution.expectedErrors,
+                solutionType: forceIncorrect === true ? 'fehlerhaft' : forceIncorrect === false ? 'korrekt' : 'zufällig'
             });
             
             // Aufgabe in den Tutor laden
@@ -925,22 +1055,43 @@ class TestManager {
             });
             
             const analysis = await this.tutor.callErrorAnalysisAPI(prompts);
-            
-            // Test-Hooks ausführen
-            const hookResults = await this.runTestHooks(task, solution, analysis);
+            const hasErrors = analysis.steps && analysis.steps.some(s => s.errorType && s.errorType !== 'none');
+            const success = !hasErrors;
+
+            // State für Hint-/Feedback-Nutzung im Test-Modus setzen
+            this.tutor.solutionState = {
+                lastUserSolution: solution.solution,
+                lastCanvasImages: [],
+                lastCheckResponse: analysis,
+                lastAnalysis: analysis,
+                lastWasCorrect: success,
+                attemptCount: 1,
+                previousAnalyses: [],
+                hilfestellungEligible: !success && !!solution.solution,
+                hilfestellungProvided: false,
+                correctedProvided: false,
+                canRequestOptimal: success,
+                optimalDelivered: false,
+                hilfestellungContent: '',
+                correctedContent: '',
+                optimalContent: '',
+                hintState: {
+                    prepared: analysis.hints || { level1: [], level2: [] },
+                    unlockedLevel: 0,
+                    popupOpen: false
+                }
+            };
             
             // Ergebnis zusammenstellen
             const result = {
                 task: task,
                 solution: solution,
                 analysis: analysis,
-                hookResults: hookResults,
-                timestamp: new Date().toISOString(),
-                allPassed: hookResults.every(h => h.passed)
+                timestamp: new Date().toISOString()
             };
             
-            // Ergebnis anzeigen
-            this.displayTestResult(result);
+            // KI-Analyse direkt anzeigen (ohne Hook-Validierung)
+            this.displayAnalysisResult(task, solution, analysis);
             
             return result;
             
@@ -1134,6 +1285,288 @@ class TestManager {
     }
     
     /**
+     * Zeigt die KI-Fehleranalyse übersichtlich an (für manuelles Review)
+     * @param {Object} task - Die Testaufgabe
+     * @param {Object} solution - Die gewählte Lösung
+     * @param {Object} analysis - Die KI-Analyse
+     */
+    displayAnalysisResult(task, solution, analysis) {
+        const resultsSection = document.getElementById('results-section');
+        const resultsContent = document.getElementById('results-content');
+        
+        if (!resultsSection || !resultsContent) return;
+        
+        // Header mit Aufgaben-Info
+        let html = `
+            <div class="test-analysis-header">
+                <div class="test-badge">
+                    <i class="fas fa-flask"></i> KI-ANALYSE TEST
+                </div>
+                <div class="test-task-info">
+                    <div><strong>Aufgabe:</strong> ${task.id}</div>
+                    <div><strong>Thema:</strong> ${task.topic}</div>
+                    <div><strong>Schwierigkeit:</strong> ${task.difficulty}</div>
+                    <div><strong>Lösungsart:</strong> ${solution.isCorrect ? '<span class="solution-correct">Korrekte Lösung</span>' : '<span class="solution-incorrect">Fehlerhafte Lösung</span>'}</div>
+                </div>
+            </div>
+        `;
+        
+        // Aufgabenstellung
+        html += `
+            <div class="test-section-box">
+                <h4><i class="fas fa-question-circle"></i> Aufgabenstellung</h4>
+                <div class="test-task-text">${task.task.replace(/\n/g, '<br>')}</div>
+            </div>
+        `;
+        
+        // Analysierte Lösung (die an die KI geschickt wurde)
+        html += `
+            <div class="test-section-box">
+                <h4><i class="fas fa-pencil-alt"></i> Analysierte Schüler-Lösung</h4>
+                <pre class="test-solution-text">${solution.solution}</pre>
+            </div>
+        `;
+        
+        // Bei fehlerhafter Lösung: Erwartete Fehler anzeigen
+        if (!solution.isCorrect && solution.expectedErrors && solution.expectedErrors.length > 0) {
+            html += `
+                <div class="test-section-box test-expected-errors">
+                    <h4><i class="fas fa-exclamation-triangle"></i> Erwartete Fehler (zur manuellen Verifikation)</h4>
+                    <ul>
+                        ${solution.expectedErrors.map(e => `
+                            <li>
+                                <strong>Schritt ${e.step}:</strong> 
+                                <span class="error-type error-type-${e.type}">${e.type}</span>
+                                - ${e.description}
+                            </li>
+                        `).join('')}
+                    </ul>
+                </div>
+            `;
+        }
+        
+        // Hint-Button Label basierend auf Level
+        const unlockedLevel = this.tutor.solutionState?.hintState?.unlockedLevel || 0;
+        let hintBtnLabel = 'Hint Stufe 1';
+        let hintBtnIcon = 'fa-lightbulb';
+        if (unlockedLevel === 1) {
+            hintBtnLabel = 'Hint Stufe 2';
+        } else if (unlockedLevel === 2) {
+            hintBtnLabel = 'Lösung anzeigen';
+            hintBtnIcon = 'fa-eye';
+        }
+        // Bei Level >= 3 wird der Button nicht mehr angezeigt (Lösung bereits sichtbar)
+        const showHintButton = !solution.isCorrect && unlockedLevel < 3;
+
+        // KI-Analyse Ergebnis
+        html += `
+            <div class="test-section-box test-ai-analysis">
+                <h4><i class="fas fa-robot"></i> KI-Fehleranalyse</h4>
+                ${showHintButton ? `
+                <div class="test-hint-actions">
+                    <button class="btn btn-secondary" id="test-hint-btn">
+                        <i class="fas ${hintBtnIcon}"></i>
+                        ${hintBtnLabel}
+                    </button>
+                </div>
+                ` : ''}
+        `;
+        
+        // Prüfe auf Vergleichsansicht
+        const hasComparison = analysis.comparison && analysis.comparison.correctSteps && analysis.comparison.correctSteps.length > 0;
+        
+        if (hasComparison) {
+            // Vergleichsansicht rendern
+            html += `<div class="test-comparison-placeholder" id="test-comparison-container"></div>`;
+        } else if (analysis && analysis.steps && analysis.steps.length > 0) {
+            html += `<div class="test-analysis-steps">`;
+            analysis.steps.forEach((step, idx) => {
+                const errorClass = step.errorType !== 'none' ? `step-error step-error-${step.errorType}` : 'step-correct';
+                html += `
+                    <div class="test-step ${errorClass}">
+                        <div class="step-header">
+                            <span class="step-number">Schritt ${step.index || idx + 1}</span>
+                            <span class="step-error-type ${step.errorType !== 'none' ? 'has-error' : ''}">${step.errorType}</span>
+                        </div>
+                        <div class="step-content">
+                            <div class="step-raw">${step.rawText || ''}</div>
+                            ${step.latex ? `<div class="step-latex">\\(${step.latex}\\)</div>` : ''}
+                        </div>
+                        ${step.operation ? `<div class="step-operation">→ ${step.operation}</div>` : ''}
+                    </div>
+                `;
+            });
+            html += `</div>`;
+        } else {
+            html += `
+                <div class="test-raw-response">
+                    <strong>Rohe Antwort:</strong>
+                    <pre>${JSON.stringify(analysis, null, 2)}</pre>
+                </div>
+            `;
+        }
+            
+        // Feedback
+        if (analysis.feedback) {
+            html += `
+                <div class="test-feedback">
+                    <h5><i class="fas fa-comment"></i> KI-Feedback</h5>
+                    <p class="feedback-summary">${analysis.feedback.summarySentence || 'Kein Feedback'}</p>
+                </div>
+            `;
+        }
+        
+        // Detailed Feedback anzeigen (Level 3)
+        if (analysis.detailedFeedback) {
+            const df = analysis.detailedFeedback;
+            html += `<div class="test-detailed-feedback">`;
+            
+            if (df.strengths && df.strengths.length > 0) {
+                html += `
+                    <div class="feedback-section feedback-strengths">
+                        <h5><i class="fas fa-check-circle"></i> Was gut war</h5>
+                        <ul>${df.strengths.map(s => `<li>${s}</li>`).join('')}</ul>
+                    </div>
+                `;
+            }
+            
+            if (df.weaknesses && df.weaknesses.length > 0) {
+                html += `
+                    <div class="feedback-section feedback-weaknesses">
+                        <h5><i class="fas fa-exclamation-triangle"></i> Verbesserungspotential</h5>
+                        <ul>${df.weaknesses.map(w => `<li>${w}</li>`).join('')}</ul>
+                    </div>
+                `;
+            }
+            
+            if (df.tips && df.tips.length > 0) {
+                html += `
+                    <div class="feedback-section feedback-tips">
+                        <h5><i class="fas fa-lightbulb"></i> Merksätze</h5>
+                        <ul>${df.tips.map(t => `<li>${t}</li>`).join('')}</ul>
+                    </div>
+                `;
+            }
+            
+            if (df.encouragement) {
+                html += `
+                    <div class="feedback-section feedback-encouragement">
+                        <p><i class="fas fa-heart"></i> ${df.encouragement}</p>
+                    </div>
+                `;
+            }
+            
+            html += `</div>`;
+        }
+        
+        html += `</div>`; // Ende test-ai-analysis
+        
+        // Gefundene Fehler Zusammenfassung
+        if (analysis && analysis.steps) {
+            const foundErrors = analysis.steps.filter(s => s.errorType !== 'none');
+            html += `
+                <div class="test-section-box test-summary">
+                    <h4><i class="fas fa-chart-bar"></i> Zusammenfassung</h4>
+                    <div class="summary-stats">
+                        <div class="stat">
+                            <span class="stat-value">${analysis.steps.length}</span>
+                            <span class="stat-label">Schritte erkannt</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-value">${foundErrors.length}</span>
+                            <span class="stat-label">Fehler gefunden</span>
+                        </div>
+                        ${!solution.isCorrect ? `
+                        <div class="stat">
+                            <span class="stat-value">${solution.expectedErrors.length}</span>
+                            <span class="stat-label">Fehler erwartet</span>
+                        </div>
+                        ` : ''}
+                    </div>
+                    ${foundErrors.length > 0 ? `
+                    <div class="found-errors-list">
+                        <strong>Gefundene Fehler:</strong>
+                        <ul>
+                            ${foundErrors.map(s => `<li>Schritt ${s.index}: <span class="error-type-${s.errorType}">${s.errorType}</span></li>`).join('')}
+                        </ul>
+                    </div>
+                    ` : '<p>Keine Fehler gefunden.</p>'}
+                </div>
+            `;
+        }
+        
+        resultsContent.innerHTML = html;
+        resultsSection.style.display = 'block';
+        resultsSection.scrollIntoView({ behavior: 'smooth' });
+
+        // Vergleichsansicht rendern falls Container vorhanden
+        const comparisonContainer = document.getElementById('test-comparison-container');
+        if (comparisonContainer && analysis.comparison && analysis.comparison.correctSteps) {
+            const wrongSteps = this.tutor.solutionState?.lastAnalysis?.steps || analysis.steps || [];
+            const comparisonView = this.tutor.renderComparisonView(
+                wrongSteps,
+                analysis.comparison.correctSteps,
+                analysis.comparison.mappings || []
+            );
+            comparisonContainer.appendChild(comparisonView);
+        }
+
+        // Hint-Button im Testmodus verdrahten
+        const testHintBtn = document.getElementById('test-hint-btn');
+        if (testHintBtn) {
+            testHintBtn.addEventListener('click', async () => {
+                await this.tutor.toggleHints();
+                
+                // Aktuelles Level nach toggleHints abrufen
+                const currentLevel = this.tutor.solutionState?.hintState?.unlockedLevel || 0;
+                
+                if (currentLevel < 3) {
+                    // Stufe 1 oder 2: Button-Label aktualisieren und Popup anzeigen
+                    this.updateTestHintButton(testHintBtn, currentLevel);
+                    this.tutor.showGlobalHintPopup();
+                } else {
+                    // Bei Level 3: Button verstecken und Analyse mit Comparison neuzeichnen
+                    testHintBtn.closest('.test-hint-actions')?.remove();
+                    
+                    if (this.tutor.solutionState.level3Data) {
+                        this.displayAnalysisResult(task, solution, this.tutor.solutionState.level3Data);
+                    }
+                    this.tutor.showGlobalHintPopup();
+                }
+            });
+        }
+        
+        // MathJax neu rendern falls vorhanden
+        if (window.MathJax && window.MathJax.typesetPromise) {
+            window.MathJax.typesetPromise([resultsContent]).catch(err => console.warn('MathJax error:', err));
+        }
+    }
+    
+    /**
+     * Aktualisiert das Label des Hint-Buttons im Test-Modus basierend auf dem aktuellen Level
+     * @param {HTMLElement} btn - Der Hint-Button
+     * @param {number} level - Das aktuelle Hint-Level (0-3)
+     */
+    updateTestHintButton(btn, level) {
+        if (!btn) return;
+        
+        let label = 'Hint Stufe 1';
+        let icon = 'fa-lightbulb';
+        
+        if (level === 1) {
+            label = 'Hint Stufe 2';
+        } else if (level === 2) {
+            label = 'Lösung anzeigen';
+            icon = 'fa-eye';
+        } else if (level >= 3) {
+            label = 'Lösung ansehen';
+            icon = 'fa-check-circle';
+        }
+        
+        btn.innerHTML = `<i class="fas ${icon}"></i> ${label}`;
+    }
+    
+    /**
      * Zeigt die Batch-Zusammenfassung an
      */
     displayBatchSummary() {
@@ -1213,6 +1646,7 @@ class MathTutorAI {
         this.currentAbiSource = null;
         this.solutionState = this.getDefaultSolutionState();
         this.stepCorrections = {};  // User-Korrekturen für einzelne Schritte
+        this.isTestMode = false;    // Flag für Test-Modus (wird vom TestManager gesetzt)
         const origin = window.location.origin && window.location.origin.startsWith('http') ? window.location.origin : 'http://localhost:4000';
         this.backendApiBase = (window.APP_CONFIG && window.APP_CONFIG.BACKEND_URL) || origin.replace(/\/$/, '');
         
@@ -1412,6 +1846,7 @@ class MathTutorAI {
         const imageInput = document.getElementById('image-input');
         const previewWrapper = document.getElementById('image-preview');
         const removeAllBtn = document.getElementById('remove-all-images');
+        const addMoreBtn = document.getElementById('add-more-images');
 
         if (!uploadZone || !imageInput || !previewWrapper || !removeAllBtn) {
             console.warn('[Image Upload] Elemente nicht gefunden');
@@ -1447,6 +1882,13 @@ class MathTutorAI {
                 this.handleImageUpload(Array.from(e.target.files));
             }
         });
+
+        // Add more images button
+        if (addMoreBtn) {
+            addMoreBtn.addEventListener('click', () => {
+                imageInput.click();
+            });
+        }
 
         // Remove all images
         removeAllBtn.addEventListener('click', () => {
@@ -1496,8 +1938,9 @@ class MathTutorAI {
     renderImagePreviews() {
         const previewWrapper = document.getElementById('image-preview');
         const previewList = document.getElementById('image-preview-list');
-            const uploadZone = document.getElementById('upload-zone');
-            const descriptionArea = document.getElementById('image-description-area');
+        const previewCount = document.getElementById('preview-count');
+        const uploadZone = document.getElementById('upload-zone');
+        const descriptionArea = document.getElementById('image-description-area');
 
         if (!previewWrapper || !previewList || !uploadZone || !descriptionArea) {
             return;
@@ -1505,11 +1948,17 @@ class MathTutorAI {
 
         previewList.innerHTML = '';
 
+        // Update preview count
+        if (previewCount) {
+            const count = this.uploadedImages.length;
+            previewCount.textContent = count === 1 ? '1 Bild' : `${count} Bilder`;
+        }
+
         const uploadHint = uploadZone.querySelector('.upload-hint');
         if (uploadHint) {
             uploadHint.textContent = this.uploadedImages.length > 0
                 ? 'Weitere Bilder hinzufügen oder hierher ziehen'
-                : 'Klicke hier oder ziehe ein Bild hierher';
+                : 'Klicke hier oder ziehe Bilder hierher';
         }
 
         if (this.uploadedImages.length === 0) {
@@ -1527,15 +1976,19 @@ class MathTutorAI {
             img.src = image.dataUrl;
             img.alt = image.name || `Bild ${index + 1}`;
 
-            const caption = document.createElement('p');
-            caption.className = 'preview-name';
-            caption.textContent = image.name || `Bild ${index + 1}`;
-
             const removeBtn = document.createElement('button');
             removeBtn.className = 'preview-remove-btn';
             removeBtn.type = 'button';
+            removeBtn.title = 'Bild entfernen';
             removeBtn.innerHTML = '<i class="fas fa-times"></i>';
-            removeBtn.addEventListener('click', () => this.removeImageByIndex(index));
+            removeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.removeImageByIndex(index);
+            });
+
+            const caption = document.createElement('p');
+            caption.className = 'preview-name';
+            caption.textContent = image.name || `Bild ${index + 1}`;
 
             item.appendChild(img);
             item.appendChild(removeBtn);
@@ -1544,8 +1997,8 @@ class MathTutorAI {
         });
 
         previewWrapper.style.display = 'block';
-            descriptionArea.style.display = 'block';
-        uploadZone.style.display = 'block';
+        descriptionArea.style.display = 'block';
+        uploadZone.style.display = 'none'; // Verstecke Upload-Zone wenn Bilder vorhanden
     }
 
     removeImageByIndex(index) {
@@ -1585,7 +2038,12 @@ class MathTutorAI {
             optimalDelivered: false,
             hilfestellungContent: '',
             correctedContent: '',
-            optimalContent: ''
+            optimalContent: '',
+            hintState: {
+                prepared: { level1: [], level2: [] },
+                unlockedLevel: 0,
+                popupOpen: false
+            }
         };
     }
 
@@ -1596,44 +2054,53 @@ class MathTutorAI {
     }
 
     getSolutionActionNote() {
+        const unlockedLevel = this.solutionState.hintState?.unlockedLevel || 0;
         if (!this.solutionState.lastUserSolution) {
-            return 'Reiche eine Lösung ein, um Hilfestellungen freizuschalten.';
+            return 'Reiche eine Lösung ein, um Hinweise zu erhalten.';
         }
         if (this.solutionState.lastWasCorrect === true) {
             return 'Deine Lösung ist korrekt! Optional kannst du dir einen optimalen Lösungsweg anzeigen lassen.';
         }
-        if (this.solutionState.correctedProvided) {
-            return 'Die korrigierte Version liegt vor. Schau dir jetzt den optimalen Lösungsweg an.';
-        }
-        if (this.solutionState.hilfestellungProvided) {
-            return 'Korrigiere deine Lösung oder lass dir bei Bedarf eine korrigierte Fassung anzeigen.';
-        }
-        if (this.solutionState.hilfestellungEligible) {
-            return 'Hilfestellung verfügbar: Lass dir deinen Lösungsweg mit Markierungen anzeigen.';
+        if (this.solutionState.lastWasCorrect === false) {
+            if (unlockedLevel === 0) {
+                return 'Hints verfügbar: Öffne Stufe 1, um Schlagwörter zu sehen.';
+            }
+            if (unlockedLevel === 1) {
+                return 'Stufe 2 bereit: Zeige nun die schrittbezogenen Hinweise an.';
+            }
+            return 'Hints aktiv. Nutze sie, um deine Schritte zu verbessern.';
         }
         return 'Reiche erneut eine Lösung ein, damit wir gezielt helfen können.';
     }
 
     updateSolutionActionButtons() {
-        const hilfestellungBtn = document.getElementById('request-hilfestellung');
-        const correctedBtn = document.getElementById('request-corrected');
+        const hintBtn = document.getElementById('request-hint');
         const optimalBtn = document.getElementById('request-optimal');
         const noteElement = document.getElementById('solution-action-note');
 
-        if (hilfestellungBtn) {
-            const eligible = this.solutionState.hilfestellungEligible
-                && !!this.solutionState.lastUserSolution
-                && !this.solutionState.correctedProvided
-                && this.solutionState.lastWasCorrect === false;
-            hilfestellungBtn.disabled = !eligible;
-        }
+        if (hintBtn) {
+            const unlockedLevel = this.solutionState.hintState?.unlockedLevel || 0;
+            const hasAnalysis = !!this.solutionState.lastAnalysis;
+            const canShow = hasAnalysis && this.solutionState.lastWasCorrect === false;
+            hintBtn.disabled = !canShow;
 
-        if (correctedBtn) {
-            const canCorrect = this.solutionState.hilfestellungProvided
-                && this.solutionState.lastWasCorrect === false
-                && !this.solutionState.correctedProvided
-                && !!this.solutionState.lastUserSolution;
-            correctedBtn.disabled = !canCorrect;
+            let label = 'Hints anzeigen';
+            let icon = 'fa-lightbulb';
+            if (unlockedLevel === 0) {
+                label = 'Hint Stufe 1';
+                icon = 'fa-lightbulb';
+            } else if (unlockedLevel === 1) {
+                label = 'Hint Stufe 2';
+                icon = 'fa-lightbulb';
+            } else if (unlockedLevel === 2) {
+                label = 'Lösung anzeigen';
+                icon = 'fa-eye';
+            } else {
+                label = 'Lösung ansehen';
+                icon = 'fa-check-circle';
+                hintBtn.disabled = false; // Immer verfügbar um Popup erneut zu öffnen
+            }
+            hintBtn.innerHTML = `<i class="fas ${icon}"></i> ${label}`;
         }
 
         if (optimalBtn) {
@@ -1891,6 +2358,59 @@ ANWEISUNGEN:
     }
 
     /**
+     * Erzeugt minimale Fallback-Hints, falls das Modell keine Hints geliefert hat.
+     * - Level1: 1 Schlagwort zum ersten Fehler
+     * - Level2: Bis zu 2 schrittbezogene Hinweise
+     */
+    generateFallbackHints(steps) {
+        const errorSteps = (steps || []).filter(s => s.errorType && s.errorType !== 'none');
+        const firstError = errorSteps[0];
+
+        const level1 = [];
+        if (firstError) {
+            const label = firstError.errorType === 'logic'
+                ? 'Falscher Ansatz'
+                : firstError.errorType === 'calc'
+                    ? 'Rechnung prüfen'
+                    : firstError.errorType === 'followup'
+                        ? 'Folgefehler'
+                        : 'Prüfe Schritt';
+            level1.push({
+                hintLevel: 1,
+                category: firstError.errorType === 'logic' ? 'wrong_method' : 'missing_step',
+                label,
+                color: firstError.errorType === 'logic' ? 'orange' : 'yellow'
+            });
+        }
+
+        const level2 = [];
+        errorSteps.slice(0, 2).forEach(s => {
+            const title = s.errorType === 'logic'
+                ? 'Ansatz prüfen'
+                : s.errorType === 'calc'
+                    ? 'Vorzeichen/Division'
+                    : s.errorType === 'followup'
+                        ? 'Vorherigen Fehler fixen'
+                        : 'Form klären';
+            const color = s.errorType === 'calc' ? 'green' : 'blue';
+            const latex = sanitizeLatex(s.latex || s.rawText || '');
+            level2.push({
+                hintLevel: 2,
+                category: s.errorType === 'calc' ? 'formula_hint' : 'step_sequence',
+                stepIndex: s.index || 1,
+                title,
+                latex,
+                color
+            });
+        });
+
+        return {
+            level1,
+            level2
+        };
+    }
+
+    /**
      * Baut den Prompt für die strukturierte Fehleranalyse
      * @param {Object} params - Parameter
      * @returns {Object} - { systemPrompt, userPrompt }
@@ -1956,20 +2476,34 @@ Lob erfolgt ausschließlich im abschließenden Feedback (nicht in Stufe 1).
 
 Kontext
 Dein Output wird von einem Programm automatisch verarbeitet und als visuelle Korrektur dargestellt.
-Das Frontend erzeugt Farben/Markierungen ausschließlich aus JSON-Feldern (errorType, uiElements.color).
+Das Frontend erzeugt Farben/Markierungen ausschließlich aus JSON-Feldern (errorType, uiElements.color, hints).
 Deshalb ist ein exakt strukturiertes, sauber geordnetes Ergebnis zwingend.
 
-STUFE 1: Fehlermarkierung (Analyse)
-Führe nur Stufe 1 aus.
+STUFE 1: Fehlermarkierung + Hint-Vorbereitung
+Führe nur Stufe 1 aus. Hints werden jetzt mitgeneriert, aber erst im Frontend auf Nutzerwunsch sichtbar.
+
+⚠️⚠️⚠️ KRITISCH - ORIGINALTEXT BEHALTEN ⚠️⚠️⚠️
+Du bist KEIN Korrektor! Du konvertierst NUR in LaTeX.
+Der Schüler muss seinen EIGENEN Fehler sehen, nicht was richtig gewesen wäre!
+
+BEISPIEL (WAS DU TUST - RICHTIG):
+- Schüler schreibt: "2x + 3 = 5, also x = 2" (mathematisch FALSCH, wäre x=1)
+- rawText: "2x + 3 = 5, also x = 2"
+- latex: "2x + 3 = 5 \\Rightarrow x = 2" (Schülerfehler beibehalten!)
+- errorType: "calc"
+
+BEISPIEL (WAS DU NIEMALS TUST - VERBOTEN):
+- Schüler schreibt: "2x + 3 = 5, also x = 2"
+- latex: "2x + 3 = 5 \\Rightarrow x = 1" ← ABSOLUT VERBOTEN! Das korrigiert den Fehler!
+
+Die Korrektur kommt ERST bei Level 3 (Lösung anzeigen), NICHT bei der Fehleranalyse!
 
 Deine Aufgaben
 1. Rechenweg strukturieren
    - Nimm den Schüler-Rechenweg (roh, evtl. unübersichtlich) und zerlege ihn in nummerierte Teilschritte.
    - Jeder Teilschritt muss genau eine klare Aussage/Umformung/Rechnung enthalten.
-   - WICHTIG: Übernimm den ORIGINAL-TEXT des Schülers EXAKT wie er ihn geschrieben hat!
-   - Auch bei Fehlern: Zeige den FALSCHEN Schritt des Schülers, NICHT die korrigierte Version!
-   - rawText = exakter Originaltext des Schülers
-   - latex = LaTeX-Version des Originaltexts (auch wenn falsch!)
+   - rawText = exakter Originaltext des Schülers (1:1 kopiert)
+   - latex = LaTeX-Version des Originaltexts (AUCH WENN FALSCH! Nur Formatierung, keine Korrektur!)
    - Gib bei jedem Schritt (außer dem letzten) das Feld "operation" an, das beschreibt, welche Rechenoperation zum NÄCHSTEN Schritt führt.
      Beispiele für operation: ":2x" (durch 2x teilen), "zgf." (zusammengefasst), "+3", "-5", "·2", "quadrieren", "Wurzel ziehen"
 
@@ -1990,14 +2524,32 @@ Deine Aufgaben
    - errorType: "formal" nur verwenden, wenn Logik- und Rechenfehler selten sind.
    - formal bedeutet: Schreibweise formal unsauber, aber inhaltlich korrekt.
 
+Hint-Generierung (wird erst sichtbar, wenn der Button geklickt wird)
+- Generiere beide Hint-Stufen jetzt, liefere sie nur als JSON (kein Fließtext).
+- Stufe 1 (hints.level1):
+  - Ziel: Problem erkennen.
+  - Inhalt: exakt 1–3 scharfe Schlagwörter, KEIN stepIndex, KEINE Schrittverweise, KEINE Formeln.
+  - Kategorien: wrong_method (z.B. "x³ ≠ x²!!!", "Grad 1!", "keine Parabel"), missing_step (z.B. "÷2 fehlt", "√D offen", "Vorzeichen!").
+  - Darstellung: hint_chip, color orange oder gelb.
+- Stufe 2 (hints.level2):
+  - Ziel: Werkzeug/Sequenz bereitstellen.
+  - Inhalt: 2–4 Wörter + latex-Formel, MIT stepIndex (genau der betroffene Schritt).
+  - Kategorien: formula_hint (z.B. "Kardano-Formel", latex: "x^3 + px + q = 0", color blau), step_sequence (z.B. "1. ÷a, 2. pq", latex: "ax^2→x^2+(b/a)x", color grün).
+  - Darstellung: info_box, color blau oder grün.
+
+Cleanup bei erneutem Versuch (attemptNumber > 1, previousAnalysis geliefert)
+- Wenn ein Fehler behoben wurde (step jetzt errorType "none"), entferne zugehörige Hints aus level1/level2.
+- Füge neue Hints nur für fortbestehende oder neue Fehler hinzu.
+- Halte Hint-Anzahl minimal: nur was nötig ist, um den nächsten Schritt zu finden.
+
 Was du in Stufe 1 NICHT tust
-- Keine Hints (keine 2–3-Wort-Boxen mit „Weiterweg").
+- Keine Musterlösung, keine vollständigen Korrekturen.
 - Keine Erklärungen in ganzen Sätzen.
-- Keine vollständige Musterlösung.
 - Kein motivierendes Feedback.
 - NIEMALS die richtige Lösung im latex-Feld zeigen!
 - NIEMALS den fehlerhaften Schritt durch die Korrektur ersetzen!
-- Der Schüler soll seinen EIGENEN Fehler sehen, nicht was richtig gewesen wäre!
+- NIEMALS rechnerische Fehler im latex stillschweigend korrigieren!
+- Wenn Schüler "x = 5" schreibt aber "x = 3" richtig wäre → latex MUSS "x = 5" sein!
 
 ⚠️ LaTeX-Formatierung (KRITISCH) ⚠️
 Die Felder steps[].latex müssen REINEN LaTeX-Inhalt enthalten.
@@ -2017,15 +2569,24 @@ Keine losen Zeichen:
 - Keine losen Backslashes: jedes \\\\ gehört zu einem gültigen LaTeX-Befehl.
 - Brüche immer als \\\\frac{...}{...}.
 
+Gepaarte Befehle (WICHTIG):
+- Jedes \\\\left MUSS ein passendes \\\\right haben!
+- \\\\left( immer mit \\\\right) abschließen
+- \\\\left[ immer mit \\\\right] abschließen
+- Bei einfachen Klammern OHNE Größenanpassung: Nutze ( ) statt \\\\left( \\\\right)
+- Vermeide \\\\left/\\\\right wenn nicht nötig für bessere Lesbarkeit
+
 KEINE Farben in LaTeX:
 - NIEMALS \\\\textcolor, \\\\color oder ähnliche Befehle im latex-Feld!
-- Farben kommen ausschließlich über errorType und uiElements.color.
+- Farben kommen ausschließlich über errorType, uiElements.color und die Hint-Farben.
+- Gilt auch für hints.level2[].latex.
 
 Output-Regeln
 - Du gibst ausschließlich ein JSON-Objekt zurück, das genau dem vorgegebenen Schema entspricht.
 - Keine Einleitung, keine Markdown-Blöcke, keine Kommentare, kein zusätzlicher Text.
 - Keine zusätzlichen Felder außerhalb des Schemas.
 - Reihenfolge: steps in natürlicher Reihenfolge des Schülerwegs (index 1..n).
+- Fülle hints.level1 und hints.level2 IMMER mit den vorbereiteten Hints (leere Arrays, falls keine Hints notwendig sind).
 
 Bedeutung der errorType-Werte (Mapping zur Visualisierung)
 - "logic" = rot (Logikfehler / nicht zielführend)
@@ -2048,6 +2609,36 @@ Kurzes Feedback (PFLICHT)
   - "Die ersten Schritte sind korrekt, aber der Lösungsweg führt nicht zum Ziel."
   - "Sehr gut! Alle Schritte sind mathematisch korrekt."
   - "Der Rechenweg zeigt gutes Verständnis, aber achte auf die Vorzeichen."
+
+=== KORREKTE LÖSUNG ERKENNEN ===
+Setze "isCorrect": true, wenn ALLE Schritte errorType "none" haben.
+Setze "isCorrect": false, wenn mindestens ein Fehler vorhanden ist.
+
+Feedback-Level bestimmen:
+- Wenn isCorrect=true UND attemptNumber=1: "feedbackLevel": "minimal"
+  → Nur 1-2 Sätze was gut war, keine ausführliche Analyse nötig
+- Wenn isCorrect=true UND attemptNumber>1 (also nach vorherigen Fehlern): "feedbackLevel": "detailed"
+  → Ausführliches Feedback + Vergleich zum letzten fehlerhaften Versuch generieren
+- Wenn isCorrect=false: "feedbackLevel": "minimal" (Fehleranalyse steht im Vordergrund)
+
+Bei feedbackLevel="detailed" (AUSFÜHRLICH!) zusätzlich generieren:
+1. "comparison" Objekt:
+   - "mappings": Semantische Zuordnung der Schritte (welcher falsche Schritt entspricht welchem korrekten)
+     Jedes Mapping enthält: wrongStepIndex, correctStepIndex, explanation (was war der Unterschied)
+   - "correctSteps": Die jetzt korrekten Schritte als Array
+2. "detailedFeedback" Objekt - AUSFÜHRLICH schreiben!:
+   - "strengths": MINDESTENS 2-3 konkrete Stärken!
+     Beispiele: "Richtiger Ansatz: pq-Formel korrekt erkannt", "Saubere Notation der Umformungen", "Gutes Verständnis der Termumformung"
+   - "weaknesses": MINDESTENS 2-3 identifizierte Fehlerquellen!
+     Beispiele: "Vorzeichenfehler beim Ausklammern von negativen Faktoren", "Division durch Variable ohne Fallunterscheidung", "Quadratwurzel-Regel nicht korrekt angewandt"
+   - "tips": MINDESTENS 2-3 Merksätze als Gedächtnisstütze!
+     Beispiele: "Merke: Minus mal Minus ergibt Plus", "Beim Auflösen von Klammern: Vorzeichen vor der Klammer beachten!", "Tipp: Bei pq-Formel immer erst durch a teilen"
+   - "encouragement": Motivierender Abschluss (2-3 Sätze)
+     Beispiel: "Du hast deine Fehler erkannt und selbstständig korrigiert - das ist der wichtigste Schritt beim Lernen! Nächstes Mal achte besonders auf die Vorzeichen, dann klappt es auf Anhieb."
+
+Bei isCorrect=true UND attemptNumber=1 (sofort korrekt):
+- comparison und detailedFeedback NICHT generieren (weglassen oder null)
+- Nur minimales Lob in feedback.summarySentence (1-2 Sätze)
 ${studentContextSection}${previousFeedbackSection}`;
 
         const userPrompt = `Aufgabe:
@@ -2073,7 +2664,7 @@ Achte darauf, bei jedem Schritt (außer dem letzten) das "operation"-Feld anzuge
         
         let model;
         if (this.apiProvider === 'openai') {
-            model = 'gpt-4o'; // Modell mit Structured Outputs Support
+            model = 'gpt-5.2'; // Besseres Modell für komplexe Fehleranalyse
         } else {
             model = 'claude-3-5-sonnet-20241022';
         }
@@ -2108,10 +2699,33 @@ WICHTIG: Du MUSST deine Antwort als valides JSON-Objekt im folgenden Format ausg
     }
   ],
   "uiElements": [],
+  "hints": {
+    "level1": [
+      { "hintLevel": 1, "category": "wrong_method|missing_step", "label": "1-3 Schlagwörter", "color": "orange|yellow" }
+    ],
+    "level2": [
+      { "hintLevel": 2, "category": "formula_hint|step_sequence", "stepIndex": 2, "title": "2-4 Wörter", "latex": "x^3 + px + q = 0", "color": "blue|green" }
+    ]
+  },
+  "isCorrect": true/false,
+  "feedbackLevel": "minimal|detailed",
   "feedback": {
     "summarySentence": "Kurze Rückmeldung (1-2 Sätze) was gut war und wo es Probleme gibt"
+  },
+  "comparison": {
+    "mappings": [{ "wrongStepIndex": 2, "correctStepIndex": 2, "explanation": "..." }],
+    "correctSteps": [{ "index": 1, "latex": "...", "operation": "..." }]
+  },
+  "detailedFeedback": {
+    "strengths": ["..."],
+    "weaknesses": ["..."],
+    "tips": ["..."],
+    "encouragement": "..."
   }
 }
+
+HINWEIS: comparison und detailedFeedback nur bei feedbackLevel="detailed" füllen.
+Bei feedbackLevel="minimal" diese Felder weglassen oder null setzen.
 
 Gib NUR dieses JSON zurück, keine anderen Texte davor oder danach.`;
             
@@ -2124,7 +2738,7 @@ Gib NUR dieses JSON zurück, keine anderen Texte davor oder danach.`;
                     },
                     userMessage
                 ],
-                max_tokens: 4000,
+                max_completion_tokens: 4000,
                 temperature: 0.3,
                 response_format: {
                     type: 'json_object'
@@ -2234,6 +2848,24 @@ Gib NUR dieses JSON zurück, keine anderen Texte davor oder danach.`;
             parsedResponse.steps = parsedResponse.steps.map(step => sanitizeStepLatex(step));
         }
 
+        // Stelle sicher, dass Hints vorhanden und sanitisiert sind
+        if (!parsedResponse.hints || typeof parsedResponse.hints !== 'object') {
+            parsedResponse.hints = { level1: [], level2: [] };
+        }
+        parsedResponse.hints.level1 = Array.isArray(parsedResponse.hints.level1) ? parsedResponse.hints.level1 : [];
+        parsedResponse.hints.level2 = Array.isArray(parsedResponse.hints.level2) ? parsedResponse.hints.level2 : [];
+        parsedResponse.hints.level2 = parsedResponse.hints.level2.map(h => ({
+            ...h,
+            latex: h?.latex ? sanitizeLatex(h.latex) : ''
+        }));
+
+        // Fallback-Hints generieren, falls keine geliefert wurden (z.B. Testmodus)
+        const hasNoHints = (!parsedResponse.hints.level1 || parsedResponse.hints.level1.length === 0)
+            && (!parsedResponse.hints.level2 || parsedResponse.hints.level2.length === 0);
+        if (hasNoHints && parsedResponse.steps && parsedResponse.steps.length > 0) {
+            parsedResponse.hints = this.generateFallbackHints(parsedResponse.steps);
+        }
+
         // Mathematische Validierung der Fehlermarkierungen
         // Entfernt falsche Fehlermarkierungen wenn der Schritt mathematisch korrekt ist
         if (typeof validateErrorMarkings === 'function') {
@@ -2245,7 +2877,11 @@ Gib NUR dieses JSON zurück, keine anderen Texte davor oder danach.`;
         if (window.TutorModel) {
             const sanitized = window.TutorModel.createTutorResponse(parsedResponse);
             if (sanitized) {
-                return sanitized;
+                // TutorModel kennt aktuell keine Hint-Struktur – merge deshalb zurück
+                return {
+                    ...sanitized,
+                    hints: parsedResponse.hints || { level1: [], level2: [] }
+                };
             }
         }
 
@@ -2253,7 +2889,7 @@ Gib NUR dieses JSON zurück, keine anderen Texte davor oder danach.`;
     }
 
     /**
-     * Holt den Schülerkontext für den Prompt
+     * Holt den Schülerkontext für den Prompts
      */
     async getStudentContextForPrompt() {
         if (!this.userId || !this.dataAggregator) {
@@ -2275,7 +2911,7 @@ Gib NUR dieses JSON zurück, keine anderen Texte davor oder danach.`;
      * @param {Object} params - Parameter
      * @returns {Object} - { systemPrompt, userPrompt }
      */
-    buildFollowUpAnalysisPrompt({ originalSteps, userCorrections, previousAnalyses, attemptNumber, studentContext }) {
+    buildFollowUpAnalysisPrompt({ originalSteps, userCorrections, previousAnalyses, attemptNumber, studentContext, previousHints }) {
         // Formatiere den ursprünglichen Lösungsweg
         let originalSolutionText = 'URSPRÜNGLICHER LÖSUNGSWEG:\n';
         originalSteps.forEach(step => {
@@ -2318,6 +2954,25 @@ Gib NUR dieses JSON zurück, keine anderen Texte davor oder danach.`;
             });
         }
         
+        // Formatiere vorherige Hints (für Überprüfung)
+        let previousHintsText = '';
+        if (previousHints && (previousHints.level1?.length > 0 || previousHints.level2?.length > 0)) {
+            previousHintsText = '\n=== VORHERIGE HINTS ===\n';
+            if (previousHints.level1 && previousHints.level1.length > 0) {
+                previousHintsText += 'Level 1 (Schlagwörter):\n';
+                previousHints.level1.forEach(h => {
+                    previousHintsText += `  - ${h.label} [${h.category}]\n`;
+                });
+            }
+            if (previousHints.level2 && previousHints.level2.length > 0) {
+                previousHintsText += 'Level 2 (Schrittbezogen):\n';
+                previousHints.level2.forEach(h => {
+                    previousHintsText += `  - Schritt ${h.stepIndex}: ${h.title} [${h.category}]\n`;
+                });
+            }
+            previousHintsText += '\nEntferne Hints zu Fehlern, die jetzt behoben sind.\n';
+        }
+        
         // Schülerkontext
         let studentContextSection = '';
         if (studentContext) {
@@ -2341,6 +2996,18 @@ ${weaknessesText ? `Schwächen: ${weaknessesText}` : ''}
 
 Dies ist eine FOLGE-ANALYSE nach Korrekturen des Schülers (Versuch ${attemptNumber}).
 
+⚠️⚠️⚠️ KRITISCH - ORIGINALTEXT BEHALTEN ⚠️⚠️⚠️
+Du bist KEIN Korrektor! Du konvertierst NUR in LaTeX.
+Der Schüler muss seinen EIGENEN Fehler sehen!
+
+BEISPIEL (RICHTIG):
+- Schüler schreibt: "x = 5" (mathematisch falsch)
+- latex: "x = 5" (Fehler beibehalten!)
+
+BEISPIEL (VERBOTEN):
+- Schüler schreibt: "x = 5" (richtig wäre x = 3)
+- latex: "x = 3" ← VERBOTEN! Keine Korrektur!
+
 Der Schüler hat seinen vorherigen Lösungsweg überarbeitet und bestimmte Schritte korrigiert.
 Deine Aufgabe ist es:
 1. Die korrigierten Schritte zu überprüfen
@@ -2356,11 +3023,18 @@ WICHTIG - FOLGEFEHLER-BEHANDLUNG:
 
 Deine Aufgaben (wie bei der Erst-Analyse):
 1. Rechenweg strukturieren - Alle Schritte auflisten (mit Korrekturen eingebaut)
+   - rawText = exakter Text des Schülers (NIEMALS korrigieren!)
+   - latex = LaTeX-Version des Schülertexts (NIEMALS korrigieren!)
 2. Logik prüfen (Priorität 1) - errorType: "logic"
 3. Rechnungen prüfen (Priorität 2) - errorType: "calc"  
 4. Folgefehler markieren (Priorität 3) - errorType: "followup"
 5. Formales nur selten - errorType: "formal"
 6. Gib bei jedem Schritt (außer dem letzten) das "operation"-Feld an
+7. Hints vorbereiten (wie in der Erst-Analyse):
+   - Stufe 1 (hints.level1): 1–3 Schlagwörter, keine stepIndex, Kategorien wrong_method oder missing_step.
+   - Stufe 2 (hints.level2): Schrittbezogene Hinweise mit stepIndex, Kategorien formula_hint oder step_sequence, inkl. latex ohne Delimiter.
+   - Farben: level1 orange/gelb, level2 blau/grün.
+   - Entferne Hints zu behobenen Fehlern (errorType jetzt "none").
 
 ⚠️ LaTeX-Formatierung (KRITISCH) ⚠️
 Die Felder steps[].latex müssen REINEN LaTeX-Inhalt enthalten.
@@ -2391,7 +3065,7 @@ Kurzes Feedback (PFLICHT)
 Output-Format:
 - Gib NUR ein JSON-Objekt zurück
 - Keine Einleitung, keine Kommentare
-${studentContextSection}${previousAnalysesText}`;
+${studentContextSection}${previousAnalysesText}${previousHintsText}`;
 
         const userPrompt = `Aufgabe:
 ${this.currentTask}
@@ -3117,26 +3791,49 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
                         ></textarea>
                     </div>
                     
-                    <!-- Zeichenbereich -->
-                    <div class="drawing-section">
+                    <!-- Toggle Button für Skizzen -->
+                    <button class="btn btn-secondary sketch-toggle-btn" id="sketch-toggle-btn">
+                        <i class="fas fa-pencil-ruler"></i>
+                        <span>Skizze hinzufügen</span>
+                        <i class="fas fa-chevron-down toggle-icon"></i>
+                    </button>
+                    
+                    <!-- Zeichenbereich (standardmäßig eingeklappt) -->
+                    <div class="drawing-section collapsed" id="drawing-section">
                         <div class="drawing-header">
                             <label>Skizzen & Zeichnungen:</label>
                             <div class="drawing-tabs">
-                                <button class="drawing-tab-btn active" data-canvas="coordinate">
+                                <button class="drawing-tab-btn" data-canvas="coordinate">
                                     <i class="fas fa-project-diagram"></i>
                                     Koordinatensystem
                                 </button>
-                                <button class="drawing-tab-btn" data-canvas="grid">
+                                <button class="drawing-tab-btn active" data-canvas="grid">
                                     <i class="fas fa-th"></i>
                                     Kariertes Papier
                                 </button>
                             </div>
+                            <button class="btn btn-icon fullscreen-btn" id="canvas-fullscreen-btn" title="Vollbild">
+                                <i class="fas fa-expand"></i>
+                            </button>
                         </div>
                         
                         <!-- Canvas Container -->
-                        <div class="canvas-container">
-                            <canvas id="coordinate-canvas" class="drawing-canvas active" width="800" height="600"></canvas>
-                            <canvas id="grid-canvas" class="drawing-canvas" width="800" height="600"></canvas>
+                        <div class="canvas-container" id="canvas-container">
+                            <canvas id="coordinate-canvas" class="drawing-canvas" width="800" height="600"></canvas>
+                            <canvas id="grid-canvas" class="drawing-canvas active" width="800" height="600"></canvas>
+                            <!-- Multi-Page Navigation -->
+                            <div class="canvas-page-nav" id="canvas-page-nav">
+                                <button class="btn btn-icon" id="prev-page-btn" title="Vorherige Seite" disabled>
+                                    <i class="fas fa-chevron-left"></i>
+                                </button>
+                                <span class="page-indicator" id="page-indicator">Seite 1/1</span>
+                                <button class="btn btn-icon" id="next-page-btn" title="Nächste Seite">
+                                    <i class="fas fa-chevron-right"></i>
+                                </button>
+                                <button class="btn btn-icon" id="add-page-btn" title="Neue Seite hinzufügen">
+                                    <i class="fas fa-plus"></i>
+                                </button>
+                            </div>
                         </div>
                         
                         <!-- Zeichentools -->
@@ -3185,19 +3882,7 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
                         </button>
                         <button class="btn btn-secondary" id="request-hint">
                             <i class="fas fa-lightbulb"></i>
-                            Tipp anfordern
-                        </button>
-                        <button class="btn btn-secondary" id="request-hilfestellung" disabled>
-                            <i class="fas fa-life-ring"></i>
-                            Hilfestellung
-                        </button>
-                        <button class="btn btn-secondary" id="request-corrected" disabled>
-                            <i class="fas fa-tools"></i>
-                            Korrigierte Fassung
-                        </button>
-                        <button class="btn btn-secondary" id="show-solution">
-                            <i class="fas fa-eye"></i>
-                            Musterlösung anzeigen
+                            Hints anzeigen
                         </button>
                         <button class="btn btn-secondary" id="request-optimal" disabled>
                             <i class="fas fa-rocket"></i>
@@ -3257,12 +3942,20 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
             return;
         }
         
+        // A4-Verhältnis für kariertes Papier (210:297 ≈ 700:990)
+        this.gridCanvas.width = 700;
+        this.gridCanvas.height = 990;
+        
+        // Koordinatensystem quadratisch
+        this.coordinateCanvas.width = 600;
+        this.coordinateCanvas.height = 600;
+        
         this.coordinateCtx = this.coordinateCanvas.getContext('2d');
         this.gridCtx = this.gridCanvas.getContext('2d');
         
-        // Aktiver Canvas
-        this.activeCanvas = this.coordinateCanvas;
-        this.activeCtx = this.coordinateCtx;
+        // Aktiver Canvas - Kariertes Papier als Standard
+        this.activeCanvas = this.gridCanvas;
+        this.activeCtx = this.gridCtx;
         
         // Zeichenzustand
         this.isDrawing = false;
@@ -3272,6 +3965,10 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
         this.startX = 0;
         this.startY = 0;
         
+        // Multi-Page Support für kariertes Papier
+        this.gridPages = []; // Array von ImageData für jede Seite
+        this.currentGridPage = 0;
+        
         // Zeichne Hintergründe
         this.drawCoordinateSystem();
         this.drawGridPaper();
@@ -3280,12 +3977,70 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
         this.coordinateBackground = this.coordinateCtx.getImageData(0, 0, this.coordinateCanvas.width, this.coordinateCanvas.height);
         this.gridBackground = this.gridCtx.getImageData(0, 0, this.gridCanvas.width, this.gridCanvas.height);
         
+        // Erste Seite speichern
+        this.gridPages.push(this.gridCtx.getImageData(0, 0, this.gridCanvas.width, this.gridCanvas.height));
+        
         // Canvas-Nutzung tracken
         this.coordinateCanvasUsed = false;
         this.gridCanvasUsed = false;
         
         // Setup Canvas Event Listeners
         this.setupCanvasListeners();
+        
+        // Update Page Navigation
+        this.updatePageNavigation();
+    }
+    
+    updatePageNavigation() {
+        const pageIndicator = document.getElementById('page-indicator');
+        const prevBtn = document.getElementById('prev-page-btn');
+        const nextBtn = document.getElementById('next-page-btn');
+        const pageNav = document.getElementById('canvas-page-nav');
+        
+        if (!pageIndicator || !prevBtn || !nextBtn) return;
+        
+        // Nur bei kariertem Papier anzeigen
+        if (pageNav) {
+            pageNav.style.display = this.activeCanvas === this.gridCanvas ? 'flex' : 'none';
+        }
+        
+        pageIndicator.textContent = `Seite ${this.currentGridPage + 1}/${this.gridPages.length}`;
+        prevBtn.disabled = this.currentGridPage === 0;
+        nextBtn.disabled = this.currentGridPage >= this.gridPages.length - 1;
+    }
+    
+    saveCurrentGridPage() {
+        if (this.activeCanvas === this.gridCanvas && this.gridPages.length > 0) {
+            this.gridPages[this.currentGridPage] = this.gridCtx.getImageData(0, 0, this.gridCanvas.width, this.gridCanvas.height);
+        }
+    }
+    
+    goToGridPage(pageIndex) {
+        if (pageIndex < 0 || pageIndex >= this.gridPages.length) return;
+        
+        // Speichere aktuelle Seite
+        this.saveCurrentGridPage();
+        
+        // Lade neue Seite
+        this.currentGridPage = pageIndex;
+        this.gridCtx.putImageData(this.gridPages[pageIndex], 0, 0);
+        
+        this.updatePageNavigation();
+    }
+    
+    addNewGridPage() {
+        // Speichere aktuelle Seite
+        this.saveCurrentGridPage();
+        
+        // Neue leere Seite erstellen
+        this.drawGridPaper();
+        const newPage = this.gridCtx.getImageData(0, 0, this.gridCanvas.width, this.gridCanvas.height);
+        this.gridPages.push(newPage);
+        
+        // Zur neuen Seite wechseln
+        this.currentGridPage = this.gridPages.length - 1;
+        
+        this.updatePageNavigation();
     }
 
     drawCoordinateSystem() {
@@ -3293,72 +4048,144 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
         const ctx = this.coordinateCtx;
         const width = canvas.width;
         const height = canvas.height;
-        const centerX = width / 2;
-        const centerY = height / 2;
-        const gridSize = 40;
+        
+        // Koordinatensystem von 0-10 mit Ursprung unten links
+        const padding = 50; // Rand für Beschriftung
+        const graphWidth = width - padding * 2;
+        const graphHeight = height - padding * 2;
+        const unitSize = graphWidth / 10; // Größe einer Einheit
         
         // Hintergrund
-        ctx.fillStyle = '#ffffff';
+        ctx.fillStyle = '#fefefe';
         ctx.fillRect(0, 0, width, height);
         
-        // Gitterlinien
-        ctx.strokeStyle = '#e5e7eb';
+        // Leichter Hintergrund für Zeichenbereich
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(padding, padding, graphWidth, graphHeight);
+        
+        // Kleine Gitterlinien (0.5er Schritte)
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.lineWidth = 0.5;
+        
+        for (let i = 0; i <= 20; i++) {
+            const x = padding + (i * unitSize / 2);
+            ctx.beginPath();
+            ctx.moveTo(x, padding);
+            ctx.lineTo(x, height - padding);
+            ctx.stroke();
+        }
+        
+        for (let i = 0; i <= 20; i++) {
+            const y = height - padding - (i * unitSize / 2);
+            ctx.beginPath();
+            ctx.moveTo(padding, y);
+            ctx.lineTo(width - padding, y);
+            ctx.stroke();
+        }
+        
+        // Große Gitterlinien (1er Schritte)
+        ctx.strokeStyle = '#cbd5e1';
         ctx.lineWidth = 1;
         
-        // Vertikale Linien
-        for (let x = 0; x <= width; x += gridSize) {
+        for (let i = 0; i <= 10; i++) {
+            const x = padding + (i * unitSize);
             ctx.beginPath();
-            ctx.moveTo(x, 0);
-            ctx.lineTo(x, height);
+            ctx.moveTo(x, padding);
+            ctx.lineTo(x, height - padding);
             ctx.stroke();
         }
         
-        // Horizontale Linien
-        for (let y = 0; y <= height; y += gridSize) {
+        for (let i = 0; i <= 10; i++) {
+            const y = height - padding - (i * unitSize);
             ctx.beginPath();
-            ctx.moveTo(0, y);
-            ctx.lineTo(width, y);
+            ctx.moveTo(padding, y);
+            ctx.lineTo(width - padding, y);
             ctx.stroke();
         }
         
-        // Achsen
-        ctx.strokeStyle = '#000000';
-        ctx.lineWidth = 2;
+        // Achsen (dicker)
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 2.5;
         
         // X-Achse
         ctx.beginPath();
-        ctx.moveTo(0, centerY);
-        ctx.lineTo(width, centerY);
+        ctx.moveTo(padding - 10, height - padding);
+        ctx.lineTo(width - padding + 20, height - padding);
         ctx.stroke();
         
         // Y-Achse
         ctx.beginPath();
-        ctx.moveTo(centerX, 0);
-        ctx.lineTo(centerX, height);
+        ctx.moveTo(padding, height - padding + 10);
+        ctx.lineTo(padding, padding - 20);
         ctx.stroke();
         
         // Pfeile
-        const arrowSize = 10;
+        const arrowSize = 12;
+        ctx.fillStyle = '#1e293b';
+        
         // X-Achse Pfeil
         ctx.beginPath();
-        ctx.moveTo(width - arrowSize, centerY - arrowSize/2);
-        ctx.lineTo(width, centerY);
-        ctx.lineTo(width - arrowSize, centerY + arrowSize/2);
-        ctx.stroke();
+        ctx.moveTo(width - padding + 20, height - padding);
+        ctx.lineTo(width - padding + 20 - arrowSize, height - padding - arrowSize/2);
+        ctx.lineTo(width - padding + 20 - arrowSize, height - padding + arrowSize/2);
+        ctx.closePath();
+        ctx.fill();
         
         // Y-Achse Pfeil
         ctx.beginPath();
-        ctx.moveTo(centerX - arrowSize/2, arrowSize);
-        ctx.lineTo(centerX, 0);
-        ctx.lineTo(centerX + arrowSize/2, arrowSize);
-        ctx.stroke();
+        ctx.moveTo(padding, padding - 20);
+        ctx.lineTo(padding - arrowSize/2, padding - 20 + arrowSize);
+        ctx.lineTo(padding + arrowSize/2, padding - 20 + arrowSize);
+        ctx.closePath();
+        ctx.fill();
         
-        // Beschriftung
-        ctx.fillStyle = '#000000';
-        ctx.font = '14px Arial';
-        ctx.fillText('x', width - 20, centerY + 20);
-        ctx.fillText('y', centerX + 10, 20);
-        ctx.fillText('0', centerX + 5, centerY + 15);
+        // Beschriftung der Achsen
+        ctx.fillStyle = '#1e293b';
+        ctx.font = 'bold 16px Arial';
+        ctx.fillText('x', width - padding + 25, height - padding + 5);
+        ctx.fillText('y', padding - 5, padding - 25);
+        
+        // Zahlen auf den Achsen
+        ctx.font = '13px Arial';
+        ctx.fillStyle = '#475569';
+        ctx.textAlign = 'center';
+        
+        // X-Achse Zahlen
+        for (let i = 0; i <= 10; i++) {
+            const x = padding + (i * unitSize);
+            const y = height - padding + 20;
+            ctx.fillText(i.toString(), x, y);
+            
+            // Kleine Striche auf der Achse
+            ctx.strokeStyle = '#1e293b';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(x, height - padding - 4);
+            ctx.lineTo(x, height - padding + 4);
+            ctx.stroke();
+        }
+        
+        // Y-Achse Zahlen
+        ctx.textAlign = 'right';
+        for (let i = 0; i <= 10; i++) {
+            const x = padding - 10;
+            const y = height - padding - (i * unitSize) + 4;
+            if (i > 0) { // 0 nur einmal anzeigen
+                ctx.fillText(i.toString(), x, y);
+            }
+            
+            // Kleine Striche auf der Achse
+            ctx.strokeStyle = '#1e293b';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(padding - 4, height - padding - (i * unitSize));
+            ctx.lineTo(padding + 4, height - padding - (i * unitSize));
+            ctx.stroke();
+        }
+        
+        // Ursprung (0)
+        ctx.textAlign = 'right';
+        ctx.fillText('0', padding - 10, height - padding + 20);
     }
 
     drawGridPaper() {
@@ -3411,6 +4238,30 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
     }
 
     setupCanvasListeners() {
+        // Sketch Toggle Button
+        const sketchToggleBtn = document.getElementById('sketch-toggle-btn');
+        const drawingSection = document.getElementById('drawing-section');
+        
+        if (sketchToggleBtn && drawingSection) {
+            sketchToggleBtn.addEventListener('click', () => {
+                const isCollapsed = drawingSection.classList.contains('collapsed');
+                
+                if (isCollapsed) {
+                    drawingSection.classList.remove('collapsed');
+                    sketchToggleBtn.querySelector('span').textContent = 'Skizze ausblenden';
+                    sketchToggleBtn.querySelector('.toggle-icon').classList.remove('fa-chevron-down');
+                    sketchToggleBtn.querySelector('.toggle-icon').classList.add('fa-chevron-up');
+                    sketchToggleBtn.classList.add('active');
+                } else {
+                    drawingSection.classList.add('collapsed');
+                    sketchToggleBtn.querySelector('span').textContent = 'Skizze hinzufügen';
+                    sketchToggleBtn.querySelector('.toggle-icon').classList.remove('fa-chevron-up');
+                    sketchToggleBtn.querySelector('.toggle-icon').classList.add('fa-chevron-down');
+                    sketchToggleBtn.classList.remove('active');
+                }
+            });
+        }
+        
         // Canvas Tab-Switching
         const tabButtons = document.querySelectorAll('.drawing-tab-btn');
         tabButtons.forEach(btn => {
@@ -3470,6 +4321,37 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
             });
         }
         
+        // Page Navigation Buttons
+        const prevPageBtn = document.getElementById('prev-page-btn');
+        const nextPageBtn = document.getElementById('next-page-btn');
+        const addPageBtn = document.getElementById('add-page-btn');
+        
+        if (prevPageBtn) {
+            prevPageBtn.addEventListener('click', () => {
+                this.goToGridPage(this.currentGridPage - 1);
+            });
+        }
+        
+        if (nextPageBtn) {
+            nextPageBtn.addEventListener('click', () => {
+                this.goToGridPage(this.currentGridPage + 1);
+            });
+        }
+        
+        if (addPageBtn) {
+            addPageBtn.addEventListener('click', () => {
+                this.addNewGridPage();
+            });
+        }
+        
+        // Fullscreen Button
+        const fullscreenBtn = document.getElementById('canvas-fullscreen-btn');
+        if (fullscreenBtn) {
+            fullscreenBtn.addEventListener('click', () => {
+                this.toggleCanvasFullscreen();
+            });
+        }
+        
         // Drawing Events
         this.activeCanvas.addEventListener('mousedown', (e) => this.startDrawing(e));
         this.activeCanvas.addEventListener('mousemove', (e) => this.draw(e));
@@ -3518,6 +4400,9 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
             this.gridCanvas.classList.add('active');
         }
         
+        // Update Page Navigation visibility
+        this.updatePageNavigation();
+        
         // Update event listeners
         this.removeCanvasEventListeners();
         this.activeCanvas.addEventListener('mousedown', (e) => this.startDrawing(e));
@@ -3528,6 +4413,45 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
 
     removeCanvasEventListeners() {
         // Cleanup old listeners (simplified - in production you'd track these properly)
+    }
+
+    toggleCanvasFullscreen() {
+        const canvasContainer = document.getElementById('canvas-container');
+        const drawingSection = document.querySelector('.drawing-section');
+        const fullscreenBtn = document.getElementById('canvas-fullscreen-btn');
+        
+        if (!canvasContainer || !drawingSection) return;
+        
+        const isFullscreen = drawingSection.classList.contains('fullscreen-mode');
+        
+        if (isFullscreen) {
+            // Exit fullscreen
+            drawingSection.classList.remove('fullscreen-mode');
+            document.body.style.overflow = '';
+            if (fullscreenBtn) {
+                fullscreenBtn.innerHTML = '<i class="fas fa-expand"></i>';
+                fullscreenBtn.title = 'Vollbild';
+            }
+        } else {
+            // Enter fullscreen
+            drawingSection.classList.add('fullscreen-mode');
+            document.body.style.overflow = 'hidden';
+            if (fullscreenBtn) {
+                fullscreenBtn.innerHTML = '<i class="fas fa-compress"></i>';
+                fullscreenBtn.title = 'Vollbild beenden';
+            }
+        }
+        
+        // ESC-Taste zum Beenden
+        if (!isFullscreen) {
+            const escHandler = (e) => {
+                if (e.key === 'Escape' && drawingSection.classList.contains('fullscreen-mode')) {
+                    this.toggleCanvasFullscreen();
+                    document.removeEventListener('keydown', escHandler);
+                }
+            };
+            document.addEventListener('keydown', escHandler);
+        }
     }
 
     getCanvasCoordinates(e) {
@@ -3641,9 +4565,6 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
     setupInteractionListeners() {
         const submitBtn = document.getElementById('submit-solution');
         const hintBtn = document.getElementById('request-hint');
-        const solutionBtn = document.getElementById('show-solution');
-        const hilfestellungBtn = document.getElementById('request-hilfestellung');
-        const correctedBtn = document.getElementById('request-corrected');
         const optimalBtn = document.getElementById('request-optimal');
         const solutionInput = document.getElementById('solution-input');
         
@@ -3652,19 +4573,7 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
         }
         
         if (hintBtn) {
-            hintBtn.addEventListener('click', () => this.requestHint());
-        }
-        
-        if (solutionBtn) {
-            solutionBtn.addEventListener('click', () => this.showSolution());
-        }
-
-        if (hilfestellungBtn) {
-            hilfestellungBtn.addEventListener('click', () => this.requestHilfestellung());
-        }
-
-        if (correctedBtn) {
-            correctedBtn.addEventListener('click', () => this.requestCorrectedSolution());
+            hintBtn.addEventListener('click', () => this.toggleHints());
         }
 
         if (optimalBtn) {
@@ -3684,6 +4593,9 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
     }
 
     async submitSolution() {
+        // Beende Test-Modus wenn aktiv (normaler Workflow)
+        this.isTestMode = false;
+        
         const solutionInput = document.getElementById('solution-input');
         const userSolution = solutionInput.value.trim();
         
@@ -3737,7 +4649,8 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
                     userCorrections: this.stepCorrections,
                     previousAnalyses: this.solutionState.previousAnalyses,
                     attemptNumber,
-                    studentContext
+                    studentContext,
+                    previousHints: this.solutionState.hintState?.prepared || null
                 });
             } else {
                 // Normale Erst-Analyse
@@ -3763,6 +4676,7 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
                 step => step.errorType && step.errorType !== 'none'
             );
             const success = !hasErrors;
+            const preparedHints = analysisResponse.hints || { level1: [], level2: [] };
             
             // Reset step corrections nach der Analyse
             this.stepCorrections = {};
@@ -3781,7 +4695,12 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
                 optimalDelivered: false,
                 hilfestellungContent: '',
                 correctedContent: '',
-                optimalContent: ''
+                optimalContent: '',
+                hintState: {
+                    prepared: preparedHints,
+                    unlockedLevel: 0,
+                    popupOpen: false
+                }
             });
             
             // Log Performance
@@ -3844,20 +4763,54 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
             ? '<i class="fas fa-check-circle"></i> <strong>Lösung korrekt!</strong> Alle Schritte sind richtig.'
             : '<i class="fas fa-exclamation-triangle"></i> <strong>Fehler gefunden</strong> - Prüfe die markierten Schritte.';
         feedbackContent.appendChild(statusBanner);
-        
-        // Kurzes Feedback anzeigen
-        if (analysis.feedback && analysis.feedback.summarySentence) {
-            const feedbackSummary = document.createElement('div');
-            feedbackSummary.className = 'feedback-summary-box';
-            feedbackSummary.innerHTML = `
-                <i class="fas fa-comment-dots"></i>
-                <span>${analysis.feedback.summarySentence}</span>
-            `;
-            feedbackContent.appendChild(feedbackSummary);
+
+        const hintState = this.solutionState.hintState || { prepared: { level1: [], level2: [] }, unlockedLevel: 0, popupOpen: false };
+        const preparedHints = hintState.prepared || { level1: [], level2: [] };
+
+        // Hint-Popup (zentral) + Reopen-Button
+        if (hintState.unlockedLevel >= 1 && preparedHints.level1 && preparedHints.level1.length > 0) {
+            const reopenBtn = document.createElement('button');
+            reopenBtn.className = 'btn btn-ghost btn-sm hint-reopen-btn';
+            reopenBtn.innerHTML = '<i class="fas fa-lightbulb"></i> Hint-Popup öffnen';
+            reopenBtn.addEventListener('click', () => {
+                this.showGlobalHintPopup();
+            });
+            feedbackContent.appendChild(reopenBtn);
+
+            // Zeige Popup sofort, wenn popupOpen true ist
+            if (hintState.popupOpen) {
+                // Kurze Verzögerung, damit feedbackContent erst fertig gerendert wird
+                setTimeout(() => this.showGlobalHintPopup(), 50);
+            }
+        }
+
+        // Level-2-Hints nach StepIndex gruppieren (nur sichtbar, wenn freigeschaltet)
+        const level2ByStep = {};
+        if (hintState.unlockedLevel >= 2 && preparedHints.level2) {
+            preparedHints.level2.forEach(h => {
+                if (!level2ByStep[h.stepIndex]) {
+                    level2ByStep[h.stepIndex] = [];
+                }
+                level2ByStep[h.stepIndex].push(h);
+            });
         }
         
-        // Steps rendern
-        if (analysis.steps && analysis.steps.length > 0) {
+        // Prüfe ob Vergleichsansicht nötig ist (Level 3 oder korrekte Lösung nach Fehlern)
+        const hasComparison = analysis.comparison && analysis.comparison.correctSteps && analysis.comparison.correctSteps.length > 0;
+        const lastAnalysis = this.solutionState.lastAnalysis;
+        const wrongSteps = hasComparison ? (lastAnalysis?.steps || analysis.steps) : null;
+
+        // Steps rendern - entweder als Vergleich oder normal
+        if (hasComparison && wrongSteps) {
+            // Vergleichsansicht: Falsch vs. Korrekt nebeneinander
+            const comparisonView = this.renderComparisonView(
+                wrongSteps, 
+                analysis.comparison.correctSteps, 
+                analysis.comparison.mappings || []
+            );
+            feedbackContent.appendChild(comparisonView);
+        } else if (analysis.steps && analysis.steps.length > 0) {
+            // Normale Ansicht
             const stepsContainer = document.createElement('div');
             stepsContainer.className = 'tutor-steps-wrapper';
             
@@ -3870,12 +4823,29 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
             stepsList.className = 'tutor-step-list';
             
             analysis.steps.forEach((step, idx) => {
-                const stepEl = this.renderAnalysisStep(step, idx, analysis.steps.length);
+                const stepEl = this.renderAnalysisStep(step, idx, analysis.steps.length, level2ByStep[step.index || idx + 1] || []);
                 stepsList.appendChild(stepEl);
             });
             
             stepsContainer.appendChild(stepsList);
             feedbackContent.appendChild(stepsContainer);
+        }
+        
+        // Kurzes Feedback anzeigen (nach Steps)
+        if (analysis.feedback && analysis.feedback.summarySentence) {
+            const feedbackSummary = document.createElement('div');
+            feedbackSummary.className = 'feedback-summary-box';
+            feedbackSummary.innerHTML = `
+                <i class="fas fa-comment-dots"></i>
+                <span>${analysis.feedback.summarySentence}</span>
+            `;
+            feedbackContent.appendChild(feedbackSummary);
+        }
+        
+        // Ausführliches Feedback anzeigen (bei feedbackLevel="detailed")
+        if (analysis.detailedFeedback && analysis.feedbackLevel === 'detailed') {
+            const detailedFB = this.renderDetailedFeedbackBox(analysis.detailedFeedback);
+            feedbackContent.appendChild(detailedFB);
         }
         
         // UI-Elemente rendern (falls vorhanden)
@@ -3893,7 +4863,7 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
             feedbackContent.appendChild(uiContainer);
         }
         
-        // Zusammenfassung der Fehler
+        // Zusammenfassung der Fehler (am Ende)
         if (!success) {
             const errorSummary = this.createErrorSummary(analysis.steps);
             feedbackContent.appendChild(errorSummary);
@@ -3920,44 +4890,59 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
     }
 
     /**
-     * Rendert einen einzelnen Analyse-Step
+     * Rendert einen einzelnen Analyse-Step (Test-Format)
      */
-    renderAnalysisStep(step, idx, totalSteps) {
+    renderAnalysisStep(step, idx, totalSteps, level2Hints = []) {
         const stepEl = document.createElement('div');
         const hasError = step.errorType && step.errorType !== 'none';
         const stepIndex = step.index || idx + 1;
+        const hasLevel2Hints = Array.isArray(level2Hints) && level2Hints.length > 0;
         
         // Fehlertyp-Klasse
         const errorClass = {
-            'none': '',
+            'none': 'step-correct',
             'logic': 'step-error-logic',
             'calc': 'step-error-calc',
             'followup': 'step-error-followup',
             'formal': 'step-error-formal'
-        }[step.errorType] || '';
+        }[step.errorType] || 'step-correct';
         
-        stepEl.className = `tutor-step ${errorClass} ${hasError ? 'has-error' : ''}`.trim();
+        stepEl.className = `tutor-step ${errorClass} ${hasError ? 'has-error' : ''} ${hasLevel2Hints ? 'has-level2-hint' : ''}`.trim();
         stepEl.dataset.stepIndex = stepIndex;
-        stepEl.style.position = 'relative';
         
-        // Step-Inhalt Container
-        const contentWrapper = document.createElement('div');
-        contentWrapper.className = 'tutor-step-content-wrapper';
+        // Header mit Schritt-Nummer und errorType-Badge
+        const headerEl = document.createElement('div');
+        headerEl.className = 'step-header';
         
-        // Step-Nummer
-        const numEl = document.createElement('span');
-        numEl.className = 'tutor-step-num';
-        numEl.textContent = `${stepIndex}.`;
-        contentWrapper.appendChild(numEl);
+        const stepNumEl = document.createElement('span');
+        stepNumEl.className = 'step-number';
+        stepNumEl.textContent = `Schritt ${stepIndex}`;
+        headerEl.appendChild(stepNumEl);
         
-        // Inhalt-Container
+        // errorType Badge (immer anzeigen)
+        const errorTypeEl = document.createElement('span');
+        errorTypeEl.className = `step-error-type ${hasError ? 'has-error' : ''}`;
+        errorTypeEl.textContent = step.errorType || 'none';
+        headerEl.appendChild(errorTypeEl);
+        
+        stepEl.appendChild(headerEl);
+        
+        // Content-Bereich
         const contentEl = document.createElement('div');
-        contentEl.className = 'tutor-step-content';
+        contentEl.className = 'step-content';
         
-        // LaTeX-Darstellung (ohne Delimiter - wir fügen sie hier hinzu)
+        // rawText zuerst anzeigen
+        if (step.rawText) {
+            const rawEl = document.createElement('div');
+            rawEl.className = 'step-raw';
+            rawEl.textContent = step.rawText;
+            contentEl.appendChild(rawEl);
+        }
+        
+        // LaTeX-Darstellung
         if (step.latex) {
             const latexEl = document.createElement('div');
-            latexEl.className = 'tutor-step-latex';
+            latexEl.className = 'step-latex';
             
             // Bereinige das LaTeX (entferne eventuell noch vorhandene Delimiter)
             let cleanLatex = step.latex;
@@ -3974,41 +4959,48 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
             contentEl.appendChild(latexEl);
         }
         
-        // Originaltext (falls vorhanden)
-        if (step.rawText && step.rawText !== step.latex) {
-            const rawEl = document.createElement('div');
-            rawEl.className = 'tutor-step-raw';
-            rawEl.textContent = step.rawText;
-            contentEl.appendChild(rawEl);
+        stepEl.appendChild(contentEl);
+        
+        // Stufe-2-Hinweise inline anzeigen (falls freigeschaltet)
+        if (hasLevel2Hints) {
+            const annotations = document.createElement('div');
+            annotations.className = 'step-hint-annotations';
+            level2Hints.forEach(hint => {
+                const box = document.createElement('div');
+                const colorClass = hint.color ? `hint-annotation-${hint.color}` : 'hint-annotation-blue';
+                box.className = `hint-annotation ${colorClass}`;
+
+                const title = document.createElement('div');
+                title.className = 'hint-annotation-title';
+                title.textContent = hint.title || 'Hint';
+                box.appendChild(title);
+
+                if (hint.latex) {
+                    const latexEl = document.createElement('div');
+                    latexEl.className = 'hint-annotation-latex';
+                    let cleanLatex = hint.latex;
+                    if (typeof stripLatexDelimiters === 'function') {
+                        cleanLatex = stripLatexDelimiters(cleanLatex);
+                    }
+                    latexEl.innerHTML = `\\(${cleanLatex}\\)`;
+                    box.appendChild(latexEl);
+                }
+
+                annotations.appendChild(box);
+            });
+            stepEl.appendChild(annotations);
+        }
+
+        // Operation zum nächsten Schritt
+        if (step.operation) {
+            const opEl = document.createElement('div');
+            opEl.className = 'step-operation';
+            opEl.innerHTML = `→ ${step.operation}`;
+            stepEl.appendChild(opEl);
         }
         
-        contentWrapper.appendChild(contentEl);
-        
-        // Operation zum nächsten Schritt (falls nicht letzter Schritt)
-        if (step.operation && idx < totalSteps - 1) {
-            const opEl = document.createElement('span');
-            opEl.className = 'tutor-step-operation';
-            opEl.textContent = `| ${step.operation}`;
-            contentWrapper.appendChild(opEl);
-        }
-        
-        stepEl.appendChild(contentWrapper);
-        
-        // Fehlertyp-Badge
+        // Korrektur-Bereich für Fehler
         if (hasError) {
-            const badge = document.createElement('span');
-            badge.className = `tutor-error-badge error-${step.errorType}`;
-            
-            const badgeText = {
-                'logic': 'Logikfehler',
-                'calc': 'Rechenfehler',
-                'followup': 'Folgefehler',
-                'formal': 'Formfehler'
-            }[step.errorType] || 'Fehler';
-            
-            badge.textContent = badgeText;
-            stepEl.appendChild(badge);
-            
             // Korrektur-Badge (falls vorhanden)
             if (this.stepCorrections && this.stepCorrections[stepIndex]) {
                 const corrBadge = document.createElement('span');
@@ -4036,7 +5028,6 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
             
             // Click-Handler zum Auf-/Zuklappen
             stepEl.addEventListener('click', (e) => {
-                // Nicht klappen wenn ins Textfeld geklickt wird
                 if (e.target.classList.contains('step-correction-input')) {
                     return;
                 }
@@ -4049,13 +5040,168 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
                 this.updateStepCorrection(stepIndex, e.target.value);
             });
             
-            // Verhindern dass Klick auf Input das Zuklappen triggert
             textarea.addEventListener('click', (e) => {
                 e.stopPropagation();
             });
         }
         
         return stepEl;
+    }
+
+    /**
+     * Rendert die Vergleichsansicht: Fehlerhafter Weg vs. Korrekter Weg nebeneinander
+     */
+    renderComparisonView(wrongSteps, correctSteps, mappings) {
+        const container = document.createElement('div');
+        container.className = 'comparison-container';
+
+        // Header mit Trennlinie
+        const headerRow = document.createElement('div');
+        headerRow.className = 'comparison-header';
+        headerRow.innerHTML = `
+            <div class="comparison-col comparison-wrong-header">
+                <i class="fas fa-times-circle"></i> Dein Weg
+            </div>
+            <div class="comparison-divider"></div>
+            <div class="comparison-col comparison-correct-header">
+                <i class="fas fa-check-circle"></i> Korrekt
+            </div>
+        `;
+        container.appendChild(headerRow);
+
+        // Erstelle Mapping-Lookup
+        const mappingByWrongIndex = {};
+        const mappingByCorrectIndex = {};
+        (mappings || []).forEach(m => {
+            mappingByWrongIndex[m.wrongStepIndex] = m;
+            mappingByCorrectIndex[m.correctStepIndex] = m;
+        });
+
+        // Bestimme die maximale Anzahl an Schritten
+        const maxSteps = Math.max(wrongSteps?.length || 0, correctSteps?.length || 0);
+
+        for (let i = 0; i < maxSteps; i++) {
+            const wrongStep = wrongSteps?.[i];
+            const correctStep = correctSteps?.[i];
+            const mapping = wrongStep ? mappingByWrongIndex[wrongStep.index || i + 1] : 
+                           (correctStep ? mappingByCorrectIndex[correctStep.index || i + 1] : null);
+
+            const row = document.createElement('div');
+            row.className = 'comparison-row';
+
+            // Linke Spalte: Falscher Schritt
+            const wrongCol = document.createElement('div');
+            wrongCol.className = 'comparison-col comparison-wrong';
+            if (wrongStep) {
+                const hasError = wrongStep.errorType && wrongStep.errorType !== 'none';
+                wrongCol.innerHTML = `
+                    <div class="comparison-step ${hasError ? 'has-error' : ''}">
+                        <span class="comparison-step-num">${wrongStep.index || i + 1}.</span>
+                        <span class="comparison-step-latex">\\(${stripLatexDelimiters(wrongStep.latex || '')}\\)</span>
+                        ${hasError ? `<span class="comparison-error-badge">${wrongStep.errorType}</span>` : ''}
+                    </div>
+                `;
+            } else {
+                wrongCol.innerHTML = `<div class="comparison-step comparison-empty">—</div>`;
+            }
+            row.appendChild(wrongCol);
+
+            // Trennlinie
+            const divider = document.createElement('div');
+            divider.className = 'comparison-divider';
+            row.appendChild(divider);
+
+            // Rechte Spalte: Korrekter Schritt
+            const correctCol = document.createElement('div');
+            correctCol.className = 'comparison-col comparison-correct';
+            if (correctStep) {
+                correctCol.innerHTML = `
+                    <div class="comparison-step correct">
+                        <span class="comparison-step-num">${correctStep.index || i + 1}.</span>
+                        <span class="comparison-step-latex">\\(${stripLatexDelimiters(correctStep.latex || '')}\\)</span>
+                        <span class="comparison-correct-badge"><i class="fas fa-check"></i></span>
+                    </div>
+                `;
+            } else {
+                correctCol.innerHTML = `<div class="comparison-step comparison-empty">—</div>`;
+            }
+            row.appendChild(correctCol);
+
+            container.appendChild(row);
+
+            // Erklärung falls Mapping vorhanden
+            if (mapping && mapping.explanation) {
+                const explanationRow = document.createElement('div');
+                explanationRow.className = 'comparison-explanation';
+                explanationRow.innerHTML = `
+                    <i class="fas fa-info-circle"></i>
+                    <span>${mapping.explanation}</span>
+                `;
+                container.appendChild(explanationRow);
+            }
+        }
+
+        return container;
+    }
+
+    /**
+     * Rendert das ausführliche Feedback als Box in der Hauptansicht
+     */
+    renderDetailedFeedbackBox(detailedFeedback) {
+        const container = document.createElement('div');
+        container.className = 'detailed-feedback-box';
+
+        const header = document.createElement('div');
+        header.className = 'detailed-feedback-header';
+        header.innerHTML = '<i class="fas fa-graduation-cap"></i> Ausführliches Feedback';
+        container.appendChild(header);
+
+        const content = document.createElement('div');
+        content.className = 'detailed-feedback-content';
+
+        // Stärken
+        if (detailedFeedback.strengths && detailedFeedback.strengths.length > 0) {
+            const section = document.createElement('div');
+            section.className = 'feedback-section feedback-strengths';
+            section.innerHTML = `
+                <h5><i class="fas fa-check-circle"></i> Was gut war</h5>
+                <ul>${detailedFeedback.strengths.map(s => `<li>${s}</li>`).join('')}</ul>
+            `;
+            content.appendChild(section);
+        }
+
+        // Schwächen
+        if (detailedFeedback.weaknesses && detailedFeedback.weaknesses.length > 0) {
+            const section = document.createElement('div');
+            section.className = 'feedback-section feedback-weaknesses';
+            section.innerHTML = `
+                <h5><i class="fas fa-exclamation-triangle"></i> Verbesserungspotential</h5>
+                <ul>${detailedFeedback.weaknesses.map(w => `<li>${w}</li>`).join('')}</ul>
+            `;
+            content.appendChild(section);
+        }
+
+        // Merksätze
+        if (detailedFeedback.tips && detailedFeedback.tips.length > 0) {
+            const section = document.createElement('div');
+            section.className = 'feedback-section feedback-tips';
+            section.innerHTML = `
+                <h5><i class="fas fa-lightbulb"></i> Merksätze</h5>
+                <ul>${detailedFeedback.tips.map(t => `<li>${t}</li>`).join('')}</ul>
+            `;
+            content.appendChild(section);
+        }
+
+        // Ermutigung
+        if (detailedFeedback.encouragement) {
+            const section = document.createElement('div');
+            section.className = 'feedback-section feedback-encouragement';
+            section.innerHTML = `<p><i class="fas fa-heart"></i> ${detailedFeedback.encouragement}</p>`;
+            content.appendChild(section);
+        }
+
+        container.appendChild(content);
+        return container;
     }
 
     /**
@@ -4154,77 +5300,395 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
             summary.innerHTML = `
                 <h5><i class="fas fa-chart-bar"></i> Fehlerübersicht</h5>
                 <p>${summaryItems.join(' • ')}</p>
-                <p class="hint">Klicke auf "Hilfestellung" für detaillierte Erklärungen.</p>
+                <p class="hint">Nutze "Hints anzeigen", um fokussierte Hinweise zu erhalten.</p>
             `;
         }
         
         return summary;
     }
 
-    async requestHint() {
-        this.showLoading(true);
+    async toggleHints() {
+        if (!this.solutionState.lastAnalysis) {
+            return;
+        }
+
+        if (this.solutionState.lastWasCorrect === true) {
+            return;
+        }
+
+        const hintState = this.solutionState.hintState || { prepared: { level1: [], level2: [] }, unlockedLevel: 0, popupOpen: false };
+        const prepared = hintState.prepared || { level1: [], level2: [] };
+        const hasHints = (prepared.level1 && prepared.level1.length > 0) || (prepared.level2 && prepared.level2.length > 0);
+
+        // Wenn keine Hints vorhanden sind, aber die Lösung fehlerhaft ist,
+        // erlaube direktes Springen zu Level 2 (dann Level 3 = Lösung anzeigen)
+        let unlockedLevel = hintState.unlockedLevel || 0;
         
+        if (!hasHints && unlockedLevel < 2) {
+            // Keine Hints verfügbar - direkt zu Level 2 springen
+            unlockedLevel = 2;
+            this.solutionState.hintState = {
+                prepared,
+                unlockedLevel,
+                popupOpen: false
+            };
+            // Nächster Klick zeigt dann Lösung (Level 3)
+            return;
+        }
+
+        if (unlockedLevel === 0) {
+            unlockedLevel = 1;
+            hintState.popupOpen = true;
+        } else if (unlockedLevel === 1) {
+            unlockedLevel = 2;
+            hintState.popupOpen = true; // Popup erneut öffnen und Level2 anzeigen
+        } else if (unlockedLevel === 2) {
+            // Level 3: Lösung mit Erklärungen anfordern
+            unlockedLevel = 3;
+            this.solutionState.hintState = {
+                prepared,
+                unlockedLevel,
+                popupOpen: false // Popup erst nach Laden der Lösung öffnen
+            };
+            await this.requestSolutionWithExplanation();
+            return; // requestSolutionWithExplanation ruft displayStructuredFeedback selbst auf
+        } else {
+            hintState.popupOpen = true; // Erlaubt erneutes Öffnen des Popups bei Level 3
+        }
+
+        this.solutionState.hintState = {
+            prepared,
+            unlockedLevel,
+            popupOpen: hintState.popupOpen
+        };
+
         // Track hint usage
-        if (this.performanceTracker) {
-            this.performanceTracker.recordHintUsed();
-        }
-        
-        // Log Behavior
-        if (this.userId && this.behaviorTracker) {
-            await this.behaviorTracker.trackHintRequest(this.userId, {
-                topic: this.currentTaskContext?.topic
-            });
-        }
-        
         try {
-            const isAbiRewrite = this.currentTaskContext?.origin === 'abi' && !this.currentTaskContext?.hintRewriteDone;
-            if (this.currentTaskContext) {
-                this.currentTaskContext.hintsRequested = (this.currentTaskContext.hintsRequested || 0) + 1;
+            if (this.performanceTracker) {
+                this.performanceTracker.recordHintUsed();
             }
-
-            let prompt;
-            if (isAbiRewrite) {
-                const learningStyle = this.userProfile?.learningStyle || 'step-by-step';
-                const learningInstruction = this.getLearningStyleInstruction(learningStyle);
-                prompt = `
-Aufgabe (aktuelle Formulierung):
-${this.currentTask}
-
-Bitte formuliere die Aufgabenstellung so um, dass sie besser zu folgenden Lernpräferenzen passt:
-- Lernstil: ${learningStyle}
-- Anpassungshinweis: ${learningInstruction}
-
-WICHTIG:
-1. Ändere ausschließlich die Formulierung, nicht die mathematischen Anforderungen.
-2. Nutze weiterhin korrekte LaTeX-Syntax für mathematische Elemente.
-3. Gib keine Lösung, keinen Tipp und keine Hinweise auf den Lösungsweg.
-4. Behalte den Abitur-Kontext bei, aber wähle Formulierungen, die dem Lernstil entgegenkommen.`;
-            } else {
-                prompt = `
-Aufgabe:
-${this.currentTask}
-
-Der Schüler braucht einen Tipp zur Lösung dieser Aufgabe.
-Bitte gib einen hilfreichen Hinweis, der:
-1. NICHT die komplette Lösung verrät
-2. Den Schüler in die richtige Richtung lenkt
-3. Zum selbstständigen Denken anregt
-4. Eventuell ein Beispiel oder eine verwandte Formel nennt
-5. Kurz und prägnant ist
-`;
+            if (this.userId && this.behaviorTracker) {
+                await this.behaviorTracker.trackHintRequest(this.userId, {
+                    topic: this.currentTaskContext?.topic
+                });
             }
+        } catch (logError) {
+            console.warn('[Hints] Tracking failed:', logError);
+        }
+
+        // Im Test-Modus kein displayStructuredFeedback aufrufen (TestManager zeigt eigene UI)
+        if (!this.isTestMode) {
+            this.displayStructuredFeedback(this.solutionState.lastAnalysis, this.solutionState.lastWasCorrect);
+        }
+        this.updateSolutionActionButtons();
+    }
+
+    /**
+     * Level 3: Lösung mit ausführlicher Erklärung und Vergleich anfordern
+     */
+    async requestSolutionWithExplanation() {
+        this.showLoading(true);
+
+        try {
+            const lastAnalysis = this.solutionState.lastAnalysis;
+            const previousAnalyses = this.solutionState.previousAnalyses || [];
             
-            const response = await this.callAIAPI(prompt, 'hint', null, this.currentTaskContext?.topic);
-            this.displayFeedback(response);
-            if (isAbiRewrite && this.currentTaskContext) {
-                this.currentTaskContext.hintRewriteDone = true;
+            // Formatiere vorherige Versuche für Kontext
+            let previousAttemptsText = '';
+            if (previousAnalyses.length > 0) {
+                previousAttemptsText = '\n=== VORHERIGE LÖSUNGSVERSUCHE ===\n';
+                previousAnalyses.forEach((analysis, idx) => {
+                    previousAttemptsText += `Versuch ${idx + 1}:\n`;
+                    if (analysis.steps) {
+                        analysis.steps.forEach(step => {
+                            const errorLabel = step.errorType && step.errorType !== 'none' 
+                                ? ` [${step.errorType}]` 
+                                : ' [korrekt]';
+                            previousAttemptsText += `  Schritt ${step.index}: ${step.latex}${errorLabel}\n`;
+                        });
+                    }
+                    previousAttemptsText += '\n';
+                });
             }
+
+            // Formatiere letzten (aktuellen) Versuch
+            let currentAttemptText = '=== AKTUELLER LÖSUNGSVERSUCH (FEHLERHAFT) ===\n';
+            if (lastAnalysis && lastAnalysis.steps) {
+                lastAnalysis.steps.forEach(step => {
+                    const errorLabel = step.errorType && step.errorType !== 'none' 
+                        ? ` [${step.errorType}]` 
+                        : ' [korrekt]';
+                    currentAttemptText += `Schritt ${step.index}: ${step.rawText || step.latex}${errorLabel}\n`;
+                });
+            }
+
+            const systemPrompt = `Du bist ein erfahrener Mathematik-Tutor. Der Schüler hat mehrere Versuche unternommen, die Aufgabe zu lösen, aber es nicht geschafft. Jetzt zeigst du ihm die Lösung mit ausführlicher Erklärung.
+
+Deine Aufgabe:
+1. Erstelle die korrekte Musterlösung Schritt für Schritt
+2. Vergleiche jeden Schritt mit dem fehlerhaften Lösungsweg des Schülers
+3. Erkläre genau, wo und warum der Schüler Fehler gemacht hat
+4. Gib konstruktives, ausführliches Feedback mit Merksätzen
+
+⚠️ LaTeX-Formatierung (KRITISCH) ⚠️
+Alle latex-Felder müssen REINEN LaTeX-Inhalt enthalten:
+- NIEMALS \\( oder \\) verwenden!
+- NIEMALS $ oder $$ verwenden!
+- Das Frontend fügt Delimiter automatisch hinzu!
+- RICHTIG: "latex": "x^2 + 2x - 3"
+- FALSCH: "latex": "\\\\(x^2 + 2x - 3\\\\)"
+
+Du gibst ein JSON-Objekt zurück mit:
+{
+  "steps": [...], // Die korrekten Schritte (Musterlösung)
+  "comparison": {
+    "mappings": [
+      { "wrongStepIndex": 1, "correctStepIndex": 1, "explanation": "Erklärung des Unterschieds" }
+    ],
+    "correctSteps": [...] // Gleich wie steps
+  },
+  "detailedFeedback": {
+    "strengths": ["Was hat der Schüler gut gemacht?"],
+    "weaknesses": ["Welche Fehlerquellen wurden identifiziert?"],
+    "tips": ["Merksätze für die Zukunft"],
+    "encouragement": "Motivierender Abschluss - empfehle nächstes Mal selbst zu versuchen"
+  },
+  "isCorrect": false,
+  "feedbackLevel": "detailed",
+  "hints": { "level1": [], "level2": [] },
+  "uiElements": [],
+  "feedback": { "summarySentence": "Kurze Zusammenfassung" }
+}
+
+Gib NUR dieses JSON zurück, keine anderen Texte.`;
+
+            const userPrompt = `Aufgabe:
+${this.currentTask}
+
+${previousAttemptsText}
+${currentAttemptText}
+
+Erstelle die Musterlösung und erkläre die Fehler des Schülers.`;
+
+            // Verwende callErrorAnalysisAPI für strukturierte JSON-Ausgabe
+            const prompts = { systemPrompt, userPrompt };
+            const solutionData = await this.callErrorAnalysisAPI(prompts);
+
+            // Sanitiere LaTeX in den Schritten
+            if (solutionData.steps && Array.isArray(solutionData.steps)) {
+                solutionData.steps = solutionData.steps.map(step => sanitizeStepLatex(step));
+            }
+            if (solutionData.comparison && solutionData.comparison.correctSteps) {
+                solutionData.comparison.correctSteps = solutionData.comparison.correctSteps.map(step => sanitizeStepLatex(step));
+            }
+
+            // Speichere die Level-3-Daten
+            this.solutionState.level3Data = solutionData;
+            this.solutionState.hintState = {
+                ...this.solutionState.hintState,
+                unlockedLevel: 3,
+                popupOpen: true
+            };
+
+            // Zeige das Ergebnis mit Vergleichsansicht (nur im normalen Modus)
+            // Im Test-Modus kümmert sich der TestManager um die Anzeige
+            if (!this.isTestMode) {
+                this.displayStructuredFeedback(solutionData, false);
+            }
+            this.updateSolutionActionButtons();
+
         } catch (error) {
-            console.error('Fehler beim Abrufen des Tipps:', error);
-            this.showNotification('Fehler beim Abrufen des Tipps: ' + error.message, 'error');
+            console.error('[Level3] Fehler bei Lösungsanfrage:', error);
+            this.showNotification('Fehler beim Laden der Lösung: ' + error.message, 'error');
         } finally {
             this.showLoading(false);
-            this.updateSolutionActionButtons();
+        }
+    }
+
+    /**
+     * Zeigt das Hint-Popup global an (unabhängig vom Feedback-Container)
+     * Wird sowohl im normalen Modus als auch im Test-Modus verwendet
+     */
+    showGlobalHintPopup() {
+        const hintState = this.solutionState.hintState || { prepared: { level1: [], level2: [] }, unlockedLevel: 0, popupOpen: false };
+        const preparedHints = hintState.prepared || { level1: [], level2: [] };
+        const level3Data = this.solutionState.level3Data;
+
+        // Level 3: Zeige detailliertes Feedback-Popup
+        if (hintState.unlockedLevel >= 3 && level3Data) {
+            this.showLevel3Popup(level3Data);
+            return;
+        }
+
+        if (hintState.unlockedLevel < 1 || !preparedHints.level1 || preparedHints.level1.length === 0) {
+            return;
+        }
+
+        // Entferne vorhandenes Popup falls vorhanden
+        const existingOverlay = document.getElementById('global-hint-overlay');
+        if (existingOverlay) {
+            existingOverlay.remove();
+        }
+
+        const overlay = document.createElement('div');
+        overlay.id = 'global-hint-overlay';
+        overlay.className = 'hint-modal-overlay';
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                overlay.remove();
+            }
+        });
+
+        const modal = document.createElement('div');
+        modal.className = 'hint-modal';
+
+        const header = document.createElement('div');
+        header.className = 'hint-modal-header';
+        const titleText = hintState.unlockedLevel >= 2 ? 'Hints (Stufe 1 & 2)' : 'Hint Stufe 1';
+        header.innerHTML = `<div class="hint-level1-title"><i class="fas fa-lightbulb"></i> ${titleText}</div>`;
+
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'hint-modal-close';
+        closeBtn.innerHTML = '&times;';
+        closeBtn.addEventListener('click', () => {
+            overlay.remove();
+        });
+        header.appendChild(closeBtn);
+        modal.appendChild(header);
+
+        // Level 1 Chips
+        const chipList = document.createElement('div');
+        chipList.className = 'hint-chip-list';
+        preparedHints.level1.forEach(h => {
+            const chip = document.createElement('span');
+            const colorClass = h.color === 'yellow' ? 'hint-chip-yellow' : `hint-chip-${h.color || 'orange'}`;
+            chip.className = `tutor-hint-chip ${colorClass}`;
+            chip.innerHTML = `<i class="fas fa-bolt"></i> ${h.label}`;
+            chipList.appendChild(chip);
+        });
+        modal.appendChild(chipList);
+
+        // Level 2 falls freigeschaltet
+        if (hintState.unlockedLevel >= 2 && preparedHints.level2 && preparedHints.level2.length > 0) {
+            const l2Container = document.createElement('div');
+            l2Container.className = 'hint-level2-popup';
+            l2Container.innerHTML = `<div class="hint-level2-title"><i class="fas fa-tools"></i> Stufe 2 Hinweise</div>`;
+            preparedHints.level2.forEach(h => {
+                const row = document.createElement('div');
+                row.className = 'hint-level2-row';
+                row.innerHTML = `
+                    <span class="hint-level2-step">Schritt ${h.stepIndex}</span>
+                    <span class="hint-level2-text">${h.title || 'Hint'}</span>
+                    ${h.latex ? `<span class="hint-level2-formula">\\(${stripLatexDelimiters(h.latex)}\\)</span>` : ''}
+                `;
+                l2Container.appendChild(row);
+            });
+            modal.appendChild(l2Container);
+        }
+
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+
+        // MathJax rendern falls vorhanden
+        if (window.MathJax && window.MathJax.typesetPromise) {
+            window.MathJax.typesetPromise([modal]).catch(err => console.warn('MathJax error:', err));
+        }
+    }
+
+    /**
+     * Zeigt das Level-3-Popup mit detailliertem Feedback und Merksätzen
+     */
+    showLevel3Popup(level3Data) {
+        // Entferne vorhandenes Popup
+        const existingOverlay = document.getElementById('global-hint-overlay');
+        if (existingOverlay) {
+            existingOverlay.remove();
+        }
+
+        const overlay = document.createElement('div');
+        overlay.id = 'global-hint-overlay';
+        overlay.className = 'hint-modal-overlay';
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                overlay.remove();
+            }
+        });
+
+        const modal = document.createElement('div');
+        modal.className = 'hint-modal hint-modal-large';
+
+        // Header
+        const header = document.createElement('div');
+        header.className = 'hint-modal-header';
+        header.innerHTML = `<div class="hint-level1-title"><i class="fas fa-graduation-cap"></i> Lösung & Feedback</div>`;
+
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'hint-modal-close';
+        closeBtn.innerHTML = '&times;';
+        closeBtn.addEventListener('click', () => {
+            overlay.remove();
+        });
+        header.appendChild(closeBtn);
+        modal.appendChild(header);
+
+        // Detailed Feedback Content
+        const detailedFB = level3Data.detailedFeedback;
+        if (detailedFB) {
+            const feedbackContainer = document.createElement('div');
+            feedbackContainer.className = 'detailed-feedback-popup';
+
+            // Stärken
+            if (detailedFB.strengths && detailedFB.strengths.length > 0) {
+                const strengthsDiv = document.createElement('div');
+                strengthsDiv.className = 'feedback-section feedback-strengths';
+                strengthsDiv.innerHTML = `
+                    <h5><i class="fas fa-check-circle"></i> Was gut war</h5>
+                    <ul>${detailedFB.strengths.map(s => `<li>${s}</li>`).join('')}</ul>
+                `;
+                feedbackContainer.appendChild(strengthsDiv);
+            }
+
+            // Schwächen
+            if (detailedFB.weaknesses && detailedFB.weaknesses.length > 0) {
+                const weaknessesDiv = document.createElement('div');
+                weaknessesDiv.className = 'feedback-section feedback-weaknesses';
+                weaknessesDiv.innerHTML = `
+                    <h5><i class="fas fa-exclamation-triangle"></i> Verbesserungspotential</h5>
+                    <ul>${detailedFB.weaknesses.map(w => `<li>${w}</li>`).join('')}</ul>
+                `;
+                feedbackContainer.appendChild(weaknessesDiv);
+            }
+
+            // Merksätze/Tips
+            if (detailedFB.tips && detailedFB.tips.length > 0) {
+                const tipsDiv = document.createElement('div');
+                tipsDiv.className = 'feedback-section feedback-tips';
+                tipsDiv.innerHTML = `
+                    <h5><i class="fas fa-lightbulb"></i> Merksätze</h5>
+                    <ul>${detailedFB.tips.map(t => `<li>${t}</li>`).join('')}</ul>
+                `;
+                feedbackContainer.appendChild(tipsDiv);
+            }
+
+            // Ermutigung
+            if (detailedFB.encouragement) {
+                const encouragementDiv = document.createElement('div');
+                encouragementDiv.className = 'feedback-section feedback-encouragement';
+                encouragementDiv.innerHTML = `
+                    <p><i class="fas fa-heart"></i> ${detailedFB.encouragement}</p>
+                `;
+                feedbackContainer.appendChild(encouragementDiv);
+            }
+
+            modal.appendChild(feedbackContainer);
+        }
+
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+
+        // MathJax rendern falls vorhanden
+        if (window.MathJax && window.MathJax.typesetPromise) {
+            window.MathJax.typesetPromise([modal]).catch(err => console.warn('MathJax error:', err));
         }
     }
 
