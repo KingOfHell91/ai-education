@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Adaptive Math Tutoring Assistant</title>
+    <title>Cogyn - Adaptive Lernplattform</title>
     <link rel="stylesheet" href="styles.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     
@@ -68,7 +68,7 @@
     <script src="feedback-templates.js"></script>
     <script src="topic-data.js"></script>
 </head>
-<body class="sidebar-open">
+<body>
     <!-- Auth Check Script (muss vor dem Rest laden) -->
     <script>
         // =====================================================
@@ -82,7 +82,7 @@
             // Guest-User für die App
             window.currentUser = {
                 userId: 'guest_user',
-                email: 'gast@math-tutor.app',
+                email: 'gast@cogyn.app',
                 name: 'Gast',
                 attributes: { name: 'Gast' }
             };
@@ -180,62 +180,150 @@
         })();
         ===================================================== */
     </script>
-    <button class="sidebar-toggle" id="sidebar-toggle">
-        <i class="fas fa-bars"></i>
-    </button>
-    <!-- Header -->
-    <header class="header">
-        <div class="container">
-            <div class="logo">
-                <i class="fas fa-calculator"></i>
-                <h1>Math Tutor AI</h1>
-            </div>
-            <nav class="nav">
-                <ul>
-                    <li><a href="#home" class="active">Start</a></li>
-                    <li><a href="#tasks">Aufgaben</a></li>
-                    <li><a href="#user-profile">Profil</a></li>
-                    <li><a href="#results-section">Analytics</a></li>
-                </ul>
-            </nav>
-            <!-- User Info (wird dynamisch befüllt nach Login) -->
-            <div class="user-info" id="user-info" style="display: none;">
-                <div class="user-avatar" id="user-avatar">
-                    <span id="user-avatar-initials">U</span>
-                </div>
-                <div class="user-details">
-                    <div class="user-name" id="user-name-display">User Name</div>
-                    <div class="user-email" id="user-email-display">user@email.com</div>
-                </div>
-                <div class="user-actions">
-                    <button class="settings-btn" id="settings-btn" title="Einstellungen">
-                        <i class="fas fa-cog"></i>
-                    </button>
-                    <button class="logout-btn" id="logout-btn" title="Abmelden">
-                        <i class="fas fa-sign-out-alt"></i>
-                    </button>
-                </div>
-            </div>
-        </div>
-    </header>
 
-    <!-- Main Content -->
-    <main class="main">
-        <div class="container">
-            <!-- Welcome Section -->
-            <section class="welcome-section" id="home">
+    <!-- App Layout Container -->
+    <div class="app-layout">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">C</div>
+                <h1>Cogyn</h1>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-item active" data-section="dashboard">
+                    <i class="fas fa-home"></i> Dashboard
+                </a>
+                <a href="#" class="nav-item" data-section="text-input">
+                    <i class="fas fa-keyboard"></i> Text eingeben
+                </a>
+                <a href="#" class="nav-item" data-section="image-upload">
+                    <i class="fas fa-image"></i> Bild hochladen
+                </a>
+                <a href="#" class="nav-item" data-section="generate-task">
+                    <i class="fas fa-magic"></i> Aufgabe generieren
+                </a>
+                <a href="#" class="nav-item" data-section="abi-generate">
+                    <i class="fas fa-graduation-cap"></i> Abitur-Modus
+                </a>
+            </nav>
+            <div class="sidebar-stats">
+                <!-- Current Task Widget -->
+                <div class="current-task" id="current-task-widget">
+                    <div class="task-label">Aktuelle Aufgabe</div>
+                    <div class="task-title">Keine Aufgabe aktiv</div>
+                </div>
+                
+                <!-- Progress Widget -->
+                <div class="progress-widget">
+                    <h4>Fortschritt heute</h4>
+                    <div class="progress-label">
+                        <span>Gelöst</span>
+                        <span class="progress-count" id="progress-count">0/5</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+                    </div>
+                </div>
+                
+                <!-- Error Stats Widget -->
+                <div class="error-stats">
+                    <h4>Fehler heute</h4>
+                    <div class="stat-grid">
+                        <div class="stat-item stat-logic">
+                            <span class="stat-count" id="stat-logic">0</span>
+                            <span class="stat-label">Logik</span>
+                        </div>
+                        <div class="stat-item stat-calc">
+                            <span class="stat-count" id="stat-calc">0</span>
+                            <span class="stat-label">Rechnung</span>
+                        </div>
+                        <div class="stat-item stat-followup">
+                            <span class="stat-count" id="stat-followup">0</span>
+                            <span class="stat-label">Folge</span>
+                        </div>
+                        <div class="stat-item stat-formal">
+                            <span class="stat-count" id="stat-formal">0</span>
+                            <span class="stat-label">Formal</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Recommendations Widget -->
+                <div class="recommendations" id="recommendations-widget">
+                    <h4>Empfehlungen</h4>
+                    <div class="recommendation-item">
+                        <i class="fas fa-lightbulb"></i>
+                        <span>Starte mit einer Übungsaufgabe</span>
+                    </div>
+                </div>
+            </div>
+            <div class="sidebar-footer">
+                <a href="#" class="nav-item" data-section="user-profile">
+                    <i class="fas fa-user"></i> Profil
+                </a>
+            </div>
+        </aside>
+        
+        <!-- Mobile Header -->
+        <header class="mobile-header">
+            <button class="menu-toggle" id="menu-toggle">
+                <i class="fas fa-bars"></i>
+            </button>
+            <div class="logo">Cogyn</div>
+            <button class="profile-toggle" id="profile-toggle">
+                <i class="fas fa-user"></i>
+            </button>
+        </header>
+        
+        <!-- Sidebar Overlay (for mobile) -->
+        <div class="sidebar-overlay" id="sidebar-overlay"></div>
+        
+        <!-- Main Content Area -->
+        <main class="main-content" id="main-content">
+            <!-- Content Tabs (visible on desktop as secondary nav) -->
+            <div class="content-tabs" id="content-tabs">
+                <button class="tab-btn active" data-tab="dashboard">
+                    <i class="fas fa-home"></i>
+                    Dashboard
+                </button>
+                <button class="tab-btn" data-tab="text-input">
+                    <i class="fas fa-keyboard"></i>
+                    Text
+                </button>
+                <button class="tab-btn" data-tab="image-upload">
+                    <i class="fas fa-image"></i>
+                    Bild
+                </button>
+                <button class="tab-btn" data-tab="generate-task">
+                    <i class="fas fa-magic"></i>
+                    Generieren
+                </button>
+                <button class="tab-btn" data-tab="abi-generate">
+                    <i class="fas fa-graduation-cap"></i>
+                    Abitur
+                </button>
+                <button class="tab-btn" data-tab="user-profile">
+                    <i class="fas fa-user"></i>
+                    Profil
+                </button>
+            </div>
+            
+            <!-- Content Area -->
+            <div class="content-area">
+                <!-- Dashboard / Welcome Section -->
+                <section class="welcome-section tab-content active" id="dashboard">
                 <div class="welcome-content hero-grid">
                     <div class="hero-card">
                         <div class="hero-content">
-                            <div class="hero-logo">∑</div>
+                            <div class="hero-logo">C</div>
                             <div>
-                                <div class="eyebrow">Willkommen zurück</div>
-                                <h2>Adaptiver Mathematik-Coach</h2>
-                                <p>Starte auf einer dunklen, ruhigen Bühne: Rot setzt Akzente, dezente grüne Konturen leiten dich durch Analyse, Uploads und neue Aufgaben.</p>
+                                <div class="eyebrow">Dein persönlicher Tutor</div>
+                                <h2>Mathematik verstehen mit KI</h2>
+                                <p>Cogyn analysiert deine Lösungswege, erkennt Fehlerquellen und gibt dir individuelles Feedback. Lerne effektiver durch adaptive Aufgaben und gezielte Hilfestellungen.</p>
                                 <div class="hero-actions">
                                     <a class="btn btn-primary" href="#tasks">
                                         <i class="fas fa-play"></i>
-                                        Schnellstart
+                                        Jetzt starten
                                     </a>
                                     <a class="btn btn-ghost" href="#generate-task">
                                         <i class="fas fa-magic"></i>
@@ -247,50 +335,25 @@
                     </div>
                     <div class="hero-highlights">
                         <div class="pill-card">
-                            <i class="fas fa-pen-nib"></i>
+                            <i class="fas fa-brain"></i>
                             <div>
-                                <strong>Text & Bilder</strong>
-                                <span>Gib Aufgaben direkt ein oder lade Fotos für eine ruhige, präzise Analyse.</span>
+                                <strong>KI-Fehleranalyse</strong>
+                                <span>Intelligente Erkennung von Rechen-, Logik- und Folgefehlern mit präzisen Erklärungen.</span>
                             </div>
                         </div>
                         <div class="pill-card">
-                            <i class="fas fa-wave-square"></i>
+                            <i class="fas fa-user-graduate"></i>
                             <div>
-                                <strong>Digitaler Flow</strong>
-                                <span>Sanfte Übergänge, schwarzer Grundton, rote Highlights und grüne Glows für Fokus.</span>
+                                <strong>Adaptives Lernen</strong>
+                                <span>Personalisierte Aufgaben, die sich deinem Lernfortschritt und deinen Schwächen anpassen.</span>
                             </div>
                         </div>
                     </div>
                 </div>
             </section>
 
-            <!-- Input Options -->
-            <section class="input-section" id="tasks">
-                <div class="input-tabs">
-                    <button class="tab-btn active" data-tab="text-input">
-                        <i class="fas fa-keyboard"></i>
-                        Text eingeben
-                    </button>
-                    <button class="tab-btn" data-tab="image-upload">
-                        <i class="fas fa-image"></i>
-                        Bild hochladen
-                    </button>
-                    <button class="tab-btn" data-tab="generate-task">
-                        <i class="fas fa-magic"></i>
-                        Aufgabe generieren
-                    </button>
-                    <button class="tab-btn" data-tab="abi-generate">
-                        <i class="fas fa-user-graduate"></i>
-                        Abitur
-                    </button>
-                    <button class="tab-btn" data-tab="user-profile">
-                        <i class="fas fa-user"></i>
-                        Profil
-                    </button>
-                </div>
-
                 <!-- Text Input Tab -->
-                <div class="tab-content active" id="text-input">
+                <section class="tab-content" id="text-input">
                     <div class="input-container">
                         <div class="input-header">
                             <h3>Mathematik-Aufgabe eingeben</h3>
@@ -314,10 +377,10 @@
                             </div>
                         </div>
                     </div>
-                </div>
+                </section>
 
                 <!-- Image Upload Tab -->
-                <div class="tab-content" id="image-upload">
+                <section class="tab-content" id="image-upload">
                     <div class="input-container">
                         <div class="input-header">
                             <h3>Bild hochladen</h3>
@@ -364,10 +427,10 @@
                             </div>
                         </div>
                     </div>
-                </div>
+                </section>
 
                 <!-- Generate Task Tab -->
-                <div class="tab-content" id="generate-task">
+                <section class="tab-content" id="generate-task">
                     <div class="input-container">
                         <div class="input-header">
                             <h3>Neue Aufgabe generieren</h3>
@@ -381,7 +444,7 @@
                                 </label>
                                 <div class="topic-select-wrapper">
                                     <select id="topic-select" class="topic-dropdown">
-                                        <option value="">-- Thema wählen (oder Zufall) --</option>
+                                        <option value="">-- Thema wählen --</option>
                                         <!-- Wird dynamisch aus topic-data.js befüllt -->
                                     </select>
                                     <i class="fas fa-chevron-down dropdown-icon"></i>
@@ -413,51 +476,35 @@
                             
                             <!-- Aufgabentyp -->
                             <div class="form-group task-type-selection">
-                                <label>
+                                <label for="task-type-select">
                                     <i class="fas fa-tasks"></i> Aufgabentyp:
                                 </label>
-                                <div class="task-type-buttons" id="task-type-buttons">
-                                    <button type="button" class="type-btn" data-type="berechnung" title="Mathematische Aufgabe ohne Textkontext">
-                                        <i class="fas fa-calculator"></i>
-                                        <span>Berechnung</span>
-                                    </button>
-                                    <button type="button" class="type-btn" data-type="theorie" title="Erkläre, beweise oder definiere">
-                                        <i class="fas fa-book"></i>
-                                        <span>Theorie</span>
-                                    </button>
-                                    <button type="button" class="type-btn" data-type="sachaufgabe" title="Textaufgabe mit realem Kontext">
-                                        <i class="fas fa-scroll"></i>
-                                        <span>Sachaufgabe</span>
-                                    </button>
+                                <div class="topic-select-wrapper">
+                                    <select id="task-type-select" class="topic-dropdown">
+                                        <option value="">-- Aufgabentyp wählen --</option>
+                                        <option value="berechnung">Berechnung - Mathematische Aufgabe ohne Textkontext</option>
+                                        <option value="theorie">Theorie - Erkläre, beweise oder definiere</option>
+                                        <option value="sachaufgabe">Sachaufgabe - Textaufgabe mit realem Kontext</option>
+                                    </select>
+                                    <i class="fas fa-chevron-down dropdown-icon"></i>
                                 </div>
                             </div>
                             
                             <!-- Schwierigkeit -->
                             <div class="form-group difficulty-selection">
-                                <label>
+                                <label for="difficulty-select">
                                     <i class="fas fa-signal"></i> Schwierigkeit:
                                 </label>
-                                <div class="difficulty-buttons" id="difficulty-buttons">
-                                    <button type="button" class="difficulty-btn" data-difficulty="einsteiger" title="Grundlagen, einfache Zahlen">
-                                        <i class="fas fa-seedling"></i>
-                                        <span>Einsteiger</span>
-                                    </button>
-                                    <button type="button" class="difficulty-btn" data-difficulty="fortgeschritten" title="Standard-Schulaufgaben">
-                                        <i class="fas fa-graduation-cap"></i>
-                                        <span>Fortgeschritten</span>
-                                    </button>
-                                    <button type="button" class="difficulty-btn" data-difficulty="anspruchsvoll" title="Komplexere Zusammenhänge">
-                                        <i class="fas fa-brain"></i>
-                                        <span>Anspruchsvoll</span>
-                                    </button>
-                                    <button type="button" class="difficulty-btn" data-difficulty="experte" title="Abitur-Niveau">
-                                        <i class="fas fa-award"></i>
-                                        <span>Experte</span>
-                                    </button>
-                                    <button type="button" class="difficulty-btn" data-difficulty="olympiade" title="Wettbewerbsaufgaben">
-                                        <i class="fas fa-trophy"></i>
-                                        <span>Olympiade</span>
-                                    </button>
+                                <div class="topic-select-wrapper">
+                                    <select id="difficulty-select" class="topic-dropdown">
+                                        <option value="">-- Schwierigkeit wählen --</option>
+                                        <option value="einsteiger">Einsteiger - Grundlagen, einfache Zahlen</option>
+                                        <option value="fortgeschritten">Fortgeschritten - Standard-Schulaufgaben</option>
+                                        <option value="anspruchsvoll">Anspruchsvoll - Komplexere Zusammenhänge</option>
+                                        <option value="experte">Experte - Abitur-Niveau</option>
+                                        <option value="olympiade">Olympiade - Wettbewerbsaufgaben</option>
+                                    </select>
+                                    <i class="fas fa-chevron-down dropdown-icon"></i>
                                 </div>
                             </div>
                             
@@ -510,10 +557,10 @@
                             <div id="batch-progress"></div>
                         </div>
                     </div>
-                </div>
+                </section>
 
                 <!-- Abitur Generate Tab -->
-                <div class="tab-content" id="abi-generate">
+                <section class="tab-content" id="abi-generate">
                     <div class="input-container">
                         <div class="input-header">
                             <h3>Abitur-Modus</h3>
@@ -569,10 +616,10 @@
                             </div>
                         </div>
                     </div>
-                </div>
+                </section>
 
                 <!-- User Profile Tab -->
-                <div class="tab-content" id="user-profile">
+                <section class="tab-content" id="user-profile">
                     <div class="input-container">
                         <div class="input-header">
                             <h3>Dein Lernprofil</h3>
@@ -672,8 +719,7 @@
                             </div>
                         </div>
                     </div>
-                </div>
-            </section>
+                </section>
 
             <!-- Results Section -->
             <section class="results-section" id="results-section" style="display: none;">
@@ -709,15 +755,14 @@
                     </button>
                 </div>
             </section>
+            </div><!-- End of content-area -->
+        </main>
+        
+        <!-- Bottom Bar (context-dependent actions) -->
+        <div class="bottom-bar" id="bottom-bar">
+            <!-- Will be dynamically populated based on context -->
         </div>
-    </main>
-
-    <!-- Footer -->
-    <footer class="footer">
-        <div class="container">
-            <p>&copy; 2024 Adaptive Math Tutoring Assistant. Alle Rechte vorbehalten.</p>
-        </div>
-    </footer>
+    </div><!-- End of app-layout -->
 
     <!-- API Configuration Modal -->
     <div class="modal" id="api-config-modal">

@@ -1,4 +1,4 @@
-// Math Tutor AI - JavaScript für KI-Integration und Interaktivität
+// Cogyn - JavaScript für KI-Integration und Interaktivität
 
 // ==================== Error Analysis Schema für Structured Outputs ====================
 
@@ -1658,6 +1658,17 @@ class MathTutorAI {
         this.initWithAuth();
     }
     
+    /**
+     * Scrollt sanft zu einem Element mit Offset für den sticky Header
+     * @param {HTMLElement} element - Das Zielelement
+     * @param {number} offset - Offset in Pixeln (Standard: 80 für Header)
+     */
+    scrollToElement(element, offset = 80) {
+        if (!element) return;
+        const y = element.getBoundingClientRect().top + window.pageYOffset - offset;
+        window.scrollTo({ top: y, behavior: 'smooth' });
+    }
+
     async initWithAuth() {
         try {
             // =====================================================
@@ -1731,7 +1742,61 @@ class MathTutorAI {
         this.setupImageUpload();
         this.setupAbiAdminForm();
         this.setupAbiGenerator();
+        this.setupAnchorNavigation();
         // API-Konfiguration wird jetzt im Profil-Tab verwaltet
+    }
+
+    /**
+     * Setup für Anchor-Navigation mit sanftem Scroll
+     */
+    setupAnchorNavigation() {
+        // Legacy nav links
+        const navLinks = document.querySelectorAll('.nav a[href^="#"]');
+        
+        navLinks.forEach(link => {
+            link.addEventListener('click', (e) => {
+                const targetId = link.getAttribute('href').substring(1);
+                const targetElement = document.getElementById(targetId);
+                
+                if (targetElement) {
+                    e.preventDefault();
+                    
+                    // Aktualisiere aktive Klasse
+                    navLinks.forEach(l => l.classList.remove('active'));
+                    link.classList.add('active');
+                    
+                    // Scrolle zum Ziel
+                    this.scrollToElement(targetElement);
+                    
+                    // Wenn es ein Tab ist, aktiviere ihn
+                    const tabBtn = document.querySelector(`[data-tab="${targetId}"]`);
+                    if (tabBtn) {
+                        tabBtn.click();
+                    }
+                }
+            });
+        });
+
+        // Hero action buttons in dashboard
+        const heroActions = document.querySelectorAll('.hero-actions a[href^="#"]');
+        heroActions.forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                const targetId = link.getAttribute('href').substring(1);
+                
+                // Map old section IDs to new tab IDs
+                let tabId = targetId;
+                if (targetId === 'tasks') {
+                    tabId = 'text-input';
+                }
+                
+                // Switch to the corresponding tab
+                const tabBtn = document.querySelector(`.content-tabs .tab-btn[data-tab="${tabId}"]`);
+                if (tabBtn) {
+                    tabBtn.click();
+                }
+            });
+        });
     }
 
     setupEventListeners() {
@@ -1837,27 +1902,283 @@ class MathTutorAI {
     }
 
     setupTabSwitching() {
-        const tabButtons = document.querySelectorAll('.tab-btn');
+        const tabButtons = document.querySelectorAll('.content-tabs .tab-btn');
         const tabContents = document.querySelectorAll('.tab-content');
+        const sidebarNavItems = document.querySelectorAll('.sidebar-nav .nav-item, .sidebar-footer .nav-item');
 
+        // Function to switch tabs
+        const switchToTab = (targetTab) => {
+            // Remove active class from all buttons and contents
+            tabButtons.forEach(btn => btn.classList.remove('active'));
+            tabContents.forEach(content => content.classList.remove('active'));
+            sidebarNavItems.forEach(item => item.classList.remove('active'));
+
+            // Add active class to corresponding elements
+            const targetButton = document.querySelector(`.content-tabs .tab-btn[data-tab="${targetTab}"]`);
+            if (targetButton) {
+                targetButton.classList.add('active');
+            }
+
+            const targetElement = document.getElementById(targetTab);
+            if (targetElement) {
+                targetElement.classList.add('active');
+            }
+
+            // Update sidebar nav active state
+            const sidebarItem = document.querySelector(`.sidebar-nav .nav-item[data-section="${targetTab}"], .sidebar-footer .nav-item[data-section="${targetTab}"]`);
+            if (sidebarItem) {
+                sidebarItem.classList.add('active');
+            }
+
+            // Close mobile sidebar
+            this.closeMobileSidebar();
+
+            // Scrolle zum Tab-Content
+            if (targetElement) {
+                this.scrollToElement(targetElement);
+            }
+
+            // Update bottom bar based on context
+            this.updateBottomBar(targetTab);
+
+            // Lade Profil neu, wenn Profil-Tab geöffnet wird
+            if (targetTab === 'user-profile' && this.userProfile) {
+                this.populateProfileForm(this.userProfile);
+            }
+        };
+
+        // Content tabs click handlers
         tabButtons.forEach(button => {
             button.addEventListener('click', () => {
                 const targetTab = button.getAttribute('data-tab');
-                
-                // Remove active class from all buttons and contents
-                tabButtons.forEach(btn => btn.classList.remove('active'));
-                tabContents.forEach(content => content.classList.remove('active'));
-                
-                // Add active class to clicked button and corresponding content
-                button.classList.add('active');
-                document.getElementById(targetTab).classList.add('active');
-                
-                // Lade Profil neu, wenn Profil-Tab geöffnet wird
-                if (targetTab === 'user-profile' && this.userProfile) {
-                    this.populateProfileForm(this.userProfile);
-                }
+                switchToTab(targetTab);
             });
         });
+
+        // Sidebar nav click handlers
+        sidebarNavItems.forEach(item => {
+            item.addEventListener('click', (e) => {
+                e.preventDefault();
+                const targetSection = item.getAttribute('data-section');
+                switchToTab(targetSection);
+            });
+        });
+
+        // Setup mobile toggle
+        this.setupMobileToggle();
+    }
+
+    /**
+     * Setup mobile sidebar toggle
+     */
+    setupMobileToggle() {
+        const menuToggle = document.getElementById('menu-toggle');
+        const profileToggle = document.getElementById('profile-toggle');
+        const sidebar = document.getElementById('sidebar');
+        const sidebarOverlay = document.getElementById('sidebar-overlay');
+
+        if (menuToggle && sidebar) {
+            menuToggle.addEventListener('click', () => {
+                sidebar.classList.toggle('open');
+                if (sidebarOverlay) {
+                    sidebarOverlay.classList.toggle('active');
+                }
+            });
+        }
+
+        if (profileToggle) {
+            profileToggle.addEventListener('click', () => {
+                // Switch to profile tab
+                const profileTab = document.querySelector('.content-tabs .tab-btn[data-tab="user-profile"]');
+                if (profileTab) {
+                    profileTab.click();
+                }
+            });
+        }
+
+        // Close sidebar when clicking overlay
+        if (sidebarOverlay) {
+            sidebarOverlay.addEventListener('click', () => {
+                this.closeMobileSidebar();
+            });
+        }
+    }
+
+    /**
+     * Close mobile sidebar
+     */
+    closeMobileSidebar() {
+        const sidebar = document.getElementById('sidebar');
+        const sidebarOverlay = document.getElementById('sidebar-overlay');
+
+        if (sidebar) {
+            sidebar.classList.remove('open');
+        }
+        if (sidebarOverlay) {
+            sidebarOverlay.classList.remove('active');
+        }
+    }
+
+    /**
+     * Update bottom bar based on current context
+     */
+    updateBottomBar(context) {
+        const bar = document.getElementById('bottom-bar');
+        if (!bar) return;
+
+        // Clear existing content
+        bar.innerHTML = '';
+
+        switch(context) {
+            case 'text-input':
+                bar.innerHTML = `
+                    <div></div>
+                    <button class="btn btn-primary" id="bottom-analyze-btn">
+                        <i class="fas fa-brain"></i> Analysieren
+                    </button>
+                    <div></div>
+                `;
+                bar.classList.add('visible');
+                this.attachBottomBarListeners('input');
+                break;
+
+            case 'image-upload':
+                bar.innerHTML = `
+                    <div></div>
+                    <button class="btn btn-primary" id="bottom-analyze-image-btn">
+                        <i class="fas fa-brain"></i> Bild analysieren
+                    </button>
+                    <div></div>
+                `;
+                bar.classList.add('visible');
+                this.attachBottomBarListeners('image');
+                break;
+
+            case 'generate-task':
+                bar.innerHTML = `
+                    <button class="btn btn-secondary" id="bottom-random-btn">
+                        <i class="fas fa-dice"></i> Zufall
+                    </button>
+                    <button class="btn btn-primary" id="bottom-generate-btn">
+                        <i class="fas fa-magic"></i> Generieren
+                    </button>
+                    <div></div>
+                `;
+                bar.classList.add('visible');
+                this.attachBottomBarListeners('generate');
+                break;
+
+            case 'abi-generate':
+                bar.innerHTML = `
+                    <div></div>
+                    <button class="btn btn-primary" id="bottom-abi-btn">
+                        <i class="fas fa-graduation-cap"></i> Abitur-Aufgabe erstellen
+                    </button>
+                    <div></div>
+                `;
+                bar.classList.add('visible');
+                this.attachBottomBarListeners('abitur');
+                break;
+
+            case 'solving':
+                bar.innerHTML = `
+                    <button class="btn btn-secondary" id="bottom-back-btn">
+                        <i class="fas fa-arrow-left"></i> Zurück
+                    </button>
+                    <button class="btn btn-hint" id="bottom-hint-btn">
+                        <i class="fas fa-lightbulb"></i> Hint
+                    </button>
+                    <div class="btn-group">
+                        <button class="btn btn-success" id="bottom-solution-btn" disabled>
+                            <i class="fas fa-eye"></i> Lösung
+                        </button>
+                        <button class="btn btn-primary" id="bottom-next-btn">
+                            Nächste <i class="fas fa-arrow-right"></i>
+                        </button>
+                    </div>
+                `;
+                bar.classList.add('visible');
+                this.attachBottomBarListeners('solving');
+                break;
+
+            default:
+                // Dashboard or other - hide bottom bar
+                bar.classList.remove('visible');
+                break;
+        }
+    }
+
+    /**
+     * Attach event listeners for bottom bar buttons
+     */
+    attachBottomBarListeners(context) {
+        switch(context) {
+            case 'input':
+                const analyzeBtn = document.getElementById('bottom-analyze-btn');
+                if (analyzeBtn) {
+                    analyzeBtn.addEventListener('click', () => this.analyzeTextInput());
+                }
+                break;
+
+            case 'image':
+                const analyzeImageBtn = document.getElementById('bottom-analyze-image-btn');
+                if (analyzeImageBtn) {
+                    analyzeImageBtn.addEventListener('click', () => this.analyzeImageInput());
+                }
+                break;
+
+            case 'generate':
+                const randomBtn = document.getElementById('bottom-random-btn');
+                const generateBtn = document.getElementById('bottom-generate-btn');
+                if (randomBtn) {
+                    randomBtn.addEventListener('click', () => this.generateRandomTask());
+                }
+                if (generateBtn) {
+                    generateBtn.addEventListener('click', () => this.generateTask());
+                }
+                break;
+
+            case 'abitur':
+                const abiBtn = document.getElementById('bottom-abi-btn');
+                if (abiBtn) {
+                    abiBtn.addEventListener('click', () => {
+                        const abiGenerateBtn = document.getElementById('abi-generate-btn');
+                        if (abiGenerateBtn) {
+                            abiGenerateBtn.click();
+                        }
+                    });
+                }
+                break;
+
+            case 'solving':
+                const backBtn = document.getElementById('bottom-back-btn');
+                const hintBtn = document.getElementById('bottom-hint-btn');
+                const solutionBtn = document.getElementById('bottom-solution-btn');
+                const nextBtn = document.getElementById('bottom-next-btn');
+
+                if (backBtn) {
+                    backBtn.addEventListener('click', () => {
+                        // Go back to dashboard
+                        const dashboardBtn = document.querySelector('.content-tabs .tab-btn[data-tab="dashboard"]');
+                        if (dashboardBtn) {
+                            dashboardBtn.click();
+                        }
+                    });
+                }
+                if (hintBtn) {
+                    hintBtn.addEventListener('click', () => {
+                        // Trigger hint functionality
+                        console.log('[BottomBar] Hint requested');
+                    });
+                }
+                if (nextBtn) {
+                    nextBtn.addEventListener('click', () => {
+                        // Generate next task
+                        this.generateTask();
+                    });
+                }
+                break;
+        }
     }
 
     setupImageUpload() {
@@ -3002,39 +3323,23 @@ Wenn farbige Darstellung nicht möglich ist, behalte die Textlabels in eckigen K
             });
         }
         
-        // Task Type Buttons
-        const typeButtons = document.querySelectorAll('.type-btn');
-        typeButtons.forEach(btn => {
-            btn.addEventListener('click', () => {
-                // Toggle Auswahl
-                if (btn.classList.contains('active')) {
-                    btn.classList.remove('active');
-                    this.taskGenerationState.taskType = null;
-                } else {
-                    typeButtons.forEach(b => b.classList.remove('active'));
-                    btn.classList.add('active');
-                    this.taskGenerationState.taskType = btn.dataset.type;
-                }
+        // Task Type Dropdown
+        const taskTypeSelect = document.getElementById('task-type-select');
+        if (taskTypeSelect) {
+            taskTypeSelect.addEventListener('change', (e) => {
+                this.taskGenerationState.taskType = e.target.value || null;
                 this.updateSelectionPreview();
             });
-        });
+        }
         
-        // Difficulty Buttons
-        const diffButtons = document.querySelectorAll('.difficulty-btn');
-        diffButtons.forEach(btn => {
-            btn.addEventListener('click', () => {
-                // Toggle Auswahl
-                if (btn.classList.contains('active')) {
-                    btn.classList.remove('active');
-                    this.taskGenerationState.difficulty = null;
-                } else {
-                    diffButtons.forEach(b => b.classList.remove('active'));
-                    btn.classList.add('active');
-                    this.taskGenerationState.difficulty = btn.dataset.difficulty;
-                }
+        // Difficulty Dropdown
+        const difficultySelect = document.getElementById('difficulty-select');
+        if (difficultySelect) {
+            difficultySelect.addEventListener('change', (e) => {
+                this.taskGenerationState.difficulty = e.target.value || null;
                 this.updateSelectionPreview();
             });
-        });
+        }
         
         // Initiale Preview
         this.updateSelectionPreview();
@@ -3178,22 +3483,26 @@ Wenn farbige Darstellung nicht möglich ist, behalte die Textlabels in eckigen K
             difficulty: null,
             specialWishes: ''
         };
-        
+
         // UI zurücksetzen
         const topicSelect = document.getElementById('topic-select');
         if (topicSelect) topicSelect.value = '';
-        
+
         const subtopicSelect = document.getElementById('subtopic-select');
         if (subtopicSelect) subtopicSelect.value = '';
-        
+
         const subtopicWrapper = document.getElementById('subtopic-wrapper');
         if (subtopicWrapper) subtopicWrapper.classList.remove('visible');
-        
+
         const wishesInput = document.getElementById('special-wishes-input');
         if (wishesInput) wishesInput.value = '';
-        
-        document.querySelectorAll('.type-btn').forEach(btn => btn.classList.remove('active'));
-        document.querySelectorAll('.difficulty-btn').forEach(btn => btn.classList.remove('active'));
+
+        // Reset new dropdowns
+        const taskTypeSelect = document.getElementById('task-type-select');
+        if (taskTypeSelect) taskTypeSelect.value = '';
+
+        const difficultySelect = document.getElementById('difficulty-select');
+        if (difficultySelect) difficultySelect.value = '';
         
         this.updateSelectionPreview();
     }
@@ -3797,7 +4106,7 @@ Erstelle eine passende Mathematik-Aufgabe basierend auf den gegebenen Parametern
         `;
         
         resultsSection.style.display = 'block';
-        resultsSection.scrollIntoView({ behavior: 'smooth' });
+        this.scrollToElement(resultsSection);
         
         // MathJax nach dem Einfügen des Inhalts aktualisieren
         this.renderMathJax(resultsContent);
@@ -5922,7 +6231,7 @@ Verwende eine klare Struktur und deutsche mathematische Terminologie.
             feedbackArea.style.display = 'block';
             
             // Scrolle zum Feedback
-            feedbackArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            this.scrollToElement(feedbackArea);
             
             // MathJax rendern
             this.renderMathJax(feedbackContent);
